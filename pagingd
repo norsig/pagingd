@@ -50,7 +50,6 @@ my %g_hSilentRecovery;
 my %g_hVacationDays;
 my %g_hThrottleInfo;    # $g_hThrottleInfo{5555551212} = '4/1231231212';  4 pages in the last 1 minute, since that time
 my $g_tListenerSocket;
-my $g_iLastOpsEscalationTime = 0;
 my $g_iMetricDay = '';
 my $g_iMetricCount = 0;
 
@@ -326,8 +325,6 @@ sub get_oncall_name($;$) {  # oncall group, followed by optional days to add to 
 
 sub get_name_from_number($) {
     my $sNumber = shift;
-
-    return "PI" if ($sNumber eq "9999999999");
 
     if (length($sNumber) > 9) {
         foreach my $sGroup (keys %hStaff) {
@@ -1257,7 +1254,7 @@ sub process_pages($$) {
 		$iRoom = $g_hPeoplesRooms{get_oncall_name($CFGsEmergencyGroup)} if ($sSpeaker eq 'emergency');
 
 		foreach my $sPerson (keys %g_hPeoplesRooms) {
-			next if (($sPerson eq 'nagios') || ($sPerson eq 'emergency') || ($sPerson eq 'web1') || ($sPerson eq 'web2'));
+			next if (($sPerson eq 'nagios') || ($sPerson eq 'emergency'));
 
 			if ($g_hPeoplesRooms{$sPerson} == $iRoom) {
 				next if ($sPerson eq $sSpeaker);
@@ -1613,7 +1610,7 @@ sub parse_email_from_stdin() {
 		if (/^Subject: sms_reply:(\d+)/) {
 			$sClientCallerId = $1;
 		}
-		elsif (/^Subject: NPR - ER ISSUES/) {
+		elsif (/$CFGsEmergencyEmailTrigger/i) {
 			$bEmergencyEmail = 1;
 		}
 
@@ -1656,9 +1653,10 @@ sub parse_email_from_stdin() {
 	@g_aSTDIN = @aNewMsg;
 
 	if ($bEmergencyEmail) {
-		foreach (@g_aSTDIN) {
-			s/^\s*(\w|\s)+:\s*(.+)/$2/;	# drop the field names
-		}
+		# foreach (@g_aSTDIN) {
+		#	s/^\s*(\w|\s)+:\s*(.+)/$2/;	# drop the field names
+		# }
+
 		$sClientCallerId = 'emergency';
 	}
 

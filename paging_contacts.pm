@@ -4,7 +4,7 @@ require(Exporter);
 @ISA = qw(Exporter);
 @EXPORT = qw(%hStaff %hAmbiguousNames $CFGsEmergencyGroup $CFGbReplyOnEscalationCancel $CFGbRequireAtForNames $CFGsEmergencyGroup
 			$CFGsEmergencySMTPServer $CFGsEmergencySMTPFrom $CFGsEmergencySMTPTo $CFGsEmergencyRTLink $CFGsRTConnectionString 
-			$CFGsRTTicketQueue $CFGsAdminEmail $CFGsVacationSMTPTo);
+			$CFGsRTTicketQueue $CFGsAdminEmail $CFGsVacationSMTPTo $CFGsEmergencyEmailTrigger);
 
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -32,6 +32,7 @@ our $CFGbRequireAtForNames = 0;
 # used for debugging - can only be a single email address
 our $CFGsAdminEmail = 'myEmail@myCompany.com';
 
+our $CFGsEmergencyEmailTrigger = '^Subject: EMERGENCY';
 our $CFGsEmergencyGroup = 'StationRelations';
 our $CFGsEmergencySMTPServer = 'localhost';
 our $CFGsEmergencySMTPFrom = 'noreply@myCompany.com';
