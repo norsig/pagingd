@@ -1,9 +1,12 @@
 #!/bin/sh
 
+# Debian init.d file for pagingd
+
+
 PATH=/usr/local/sbin:/usr/local/bin:/usr/local/bin/paging:/sbin:/bin:/usr/sbin:/usr/bin
-DAEMON=/usr/local/bin/paging/new_pagingd
-NAME=new_pagingd
-DESC=new_pagingd
+DAEMON=/usr/local/bin/paging/pagingd
+NAME=pagingd
+DESC=pagingd
 PIDFILE=/tmp/$NAME.pid
 
 test -x $DAEMON || exit 0
