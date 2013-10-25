@@ -13,10 +13,16 @@ use Date::Format;
 use Hash::Case::Preserve;
 use Net::SMTP;
 use FreezeThaw qw(freeze thaw);
+use String::Random qw(random_string);
 use lib "/usr/local/bin";
 use paging_contacts;
 
-use constant VERSION => '2.1';
+use constant VERSION => '2.3.1';
+use constant ONEWEEK => 604800;
+
+# to change the name of the config file you have to do it here (below)
+# as well as the "use lib" and "use paging_contacts"
+use constant CONFIG_FILE_NAME => '/usr/local/bin/paging/paging_contacts.pm';
 
 # drop root privs to become 'nobody'
 $< = $> = 65534 unless ($< == 65534);
@@ -44,14 +50,22 @@ my $g_iDaemonPid;
 my @g_aSTDIN;
 my %g_hPeoplesRooms;	# $g_hPeoplesRooms{'Rick'} = 0;
 my %g_hRoomExpirations;	# $g_hRoomExpirations[0] = time();
+my %g_hBroadcastRoomOwner;  # $g_BroadcastingRoomOwner{1} = 'Rick';
 my %g_hRoomHistory;
 my %g_hPendingNotifies;
 my %g_hSilentRecovery;
+my %g_hAutoReply;
 my %g_hVacationDays;
 my %g_hThrottleInfo;    # $g_hThrottleInfo{5555551212} = '4/1231231212';  4 pages in the last 1 minute, since that time
 my $g_tListenerSocket;
+my $g_iInitBroadcastOwner = 0;
 my $g_iMetricDay = '';
 my $g_iMetricCount = 0;
+my $g_iNagiosSnoozeTime = 0;
+my $g_iRecoverySnoozeTime = 0;
+my $g_sRegexBlock = '';
+my $g_iRegexBlockExpire = 0;
+my $g_iMaintenanceRoomNumber = -1;
 
 use constant TEST_RUN					=> 0;     # disables pages, ticket creation & mass emails
 use constant DEBUG_LEVEL				=> 1;
@@ -72,6 +86,52 @@ openlog($g_sAppName, 'ndelay,pid', LOG_LOCAL0);
 sub nl($) {
 	my $bPrint = shift;
 	return (!$bPrint) ? "\n\n" : '';
+}
+
+
+
+# format system output
+sub fso($) {
+	my $sMessage = shift;
+
+	# $sMessage = '[' . $sMessage . ']';
+
+	return $sMessage;
+}
+
+
+
+sub parse_user_time($) {
+	my $sTimeInput = shift;
+
+	if ($sTimeInput =~ /^\s*(\d+)([smhdw]{0,1})\s*$/i) {
+		my $iOrigValue = $1;
+		my $iSeconds = $1;
+		my $sUnit = $2;
+		my $sText = '';
+
+		if ($sUnit eq 's') { $sText = 'second'; }
+		if ($sUnit eq 'm') { $iSeconds *= 60; $sText = 'minute'; }
+		if ($sUnit eq 'w') { $iSeconds *= ONEWEEK; $sText = 'week'; }
+		if (($sUnit eq 'h') || ($sUnit eq '')) { $iSeconds *= 3600; $sText = 'hour'; }
+
+		if ($sUnit eq 'd') { 
+			$iSeconds *= 86400;
+			$sText = 'day'; 
+
+			# days to weeks
+			if (($iOrigValue > 6) && ($iOrigValue % 7 == 0)) {
+				$iOrigValue /= 7;
+				$sText = 'week';
+				$iSeconds = ($iOrigValue * ONEWEEK);
+			}
+		}
+
+		return (0) unless $sText;
+		return ($iSeconds, "$iOrigValue $sText" . ($iOrigValue > 1 ? 's' : ''));
+	}
+
+	return 0;
 }
 
 
@@ -270,6 +330,20 @@ sub get_members_group($) {
 }
 
 
+sub get_members_full_name($) {
+	my $sPerson = shift;
+	
+	foreach my $sGroup (keys %hStaff) {
+		if (defined $hStaff{$sGroup}{members}) {
+			foreach my $sMember (keys %{$hStaff{$sGroup}{members}}) {
+				return $sMember if ($sPerson =~ /$sMember/i);
+			}
+		}
+	}
+
+	return $sPerson;
+}
+
 
 sub get_oncall_name($;$) {  # oncall group, followed by optional days to add to the date
     my $sGroup = shift;
@@ -309,7 +383,16 @@ sub get_oncall_name($;$) {  # oncall group, followed by optional days to add to 
                 last;
             }
             else {
-                $sPerson = $hSchedule{$_};
+				# we want to say "$sPerson = $hSchedule{$_}" but the below 'for' is to
+				# handle cases where a group member is defined in one case but referenced
+				# in the schedule in another, i.e. rick vs Rick
+                my $sEntry = $hSchedule{$_};
+     			foreach my $sMember (keys(%{$hStaff{$sGroup}{members}})) {
+                	if ($sEntry =~ /$sMember/i) {
+						$sPerson = $sMember;
+						last;
+					}
+				}
             }
         }
         else {
@@ -322,9 +405,335 @@ sub get_oncall_name($;$) {  # oncall group, followed by optional days to add to 
 }
 
 
+sub get_oncall_schedule($) {
+    my $sGroup = shift;
+
+	return 'None.' unless (defined $hStaff{$sGroup}{schedule});
+
+	my $iWeeksShown = 0;
+    my %hSchedule = %{$hStaff{$sGroup}{schedule}};
+    my ($iMinute, $iHour, $iDay, $iMonth, $iYear) = (localtime)[1..5];
+	my $iToday = sprintf("%d%02d%02d", $iYear+1900, $iMonth+1, $iDay);
+	my $iTodaySeconds = str2time($iToday);
+	my $sResult = '';
+
+    foreach (sort keys %hSchedule) {
+
+        if (($hSchedule{$_} =~ /^auto/i) || ($iTodaySeconds) <= str2time($_) + 604000) {
+
+            if ($hSchedule{$_} =~ /^auto/i) {
+                my $sThisSched = $hSchedule{$_};
+                my @aOnCallNames = ();
+
+                while ($sThisSched =~ m,(\w+),g) {
+                    next if ($1 =~ /^auto$/i);
+                    my $sSchedPerson = $1;
+
+                    foreach my $sMember (keys(%{$hStaff{$sGroup}{members}})) {
+                        if ($sSchedPerson =~ /$sMember/i) {
+                            push(@aOnCallNames, $sMember);
+                            last;
+                        }
+                    }
+                }
+                if ($#aOnCallNames < 0) { @aOnCallNames = keys(%{$hStaff{$sGroup}{members}}); }
+
+				my $iPlusWeek = -1;
+				while (1) {
+					$iPlusWeek++;
+                	my $iDiff = sprintf("%.0f", 7 * $iPlusWeek);
+    				my $sPerson = $aOnCallNames[int($iDiff/7) % ($#aOnCallNames + 1)];
+    				$sPerson =~ s/([^|]+).*/$1/;
+					my $iNewDay = str2time($_) + ($iPlusWeek * ONEWEEK);
+
+					next unless ($iNewDay + 604000 >= $iTodaySeconds);
+
+                	$sResult .= time2str("%x", $iNewDay) . ": " . $sPerson . "\n";
+					$iWeeksShown++;
+
+					last if ($iWeeksShown > 4);
+				}
+                last;
+            }
+            else {
+                # we want to say "$sPerson = $hSchedule{$_}" but the below 'for' is to
+                # handle cases where a group member is defined in one case but referenced
+                # in the schedule in another, i.e. rick vs Rick
+                my $sEntry = $hSchedule{$_};
+                foreach my $sMember (keys(%{$hStaff{$sGroup}{members}})) {
+                    if ($sEntry =~ /$sMember/i) {
+    					my $sPerson = $sMember;
+    					$sPerson =~ s/([^|]+).*/$1/;
+                        $sResult .= time2str("%x", str2time($_)) . ": $sPerson\n";
+						$iWeeksShown++;
+                        last;
+                    }
+                }
+            }
+        }
+    }
+
+	return $sResult;
+}
+
+
+
+sub write_config_with_schedule($$) {
+	my $sGroup = shift;
+	my $sNewSchedule = shift;
+
+	unless (open(CFG_EXISTING, CONFIG_FILE_NAME)) {
+		syslog(LOG_INFO, "write_config_with_schedule($sGroup, ...) Error: Unable to open existing config file;  file perms?");
+		return 0;
+	}
+
+	unless (open(CFG_NEW, '>' . CONFIG_FILE_NAME . '.new')) { 
+		syslog(LOG_INFO, "write_config_with_schedule($sGroup, ...) Error: Unable to create new config file;  file perms?");
+		return 0;
+	}
+
+	my $bInGroup = 0;
+	my $bInSchedule = 0;
+
+	while (<CFG_EXISTING>) {
+		my $sWorkingLine = $_;
+
+		# lose comments so we don't get confused by something that isn't actually code
+		$sWorkingLine =~ s/(?<!\$)#.*$//;
+	
+		# we make some assumptions here so that I don't have to write a full perl parser.
+		# namely that the config is laid out with one assignment or brace per line
+		# 'TeamA' => { 'schedule' => { '20130101' => 'auto' } },
+		# is valid perl but this wimpy parser isn't going to handle that.  we need it
+		# broken out per line like in the sample paging_contacts.pm file.
+
+		if ($bInGroup && $bInSchedule) {
+			if ($sWorkingLine =~ /\'\d{8}\'\s*=>\s*\'.*\'/) {
+				next;  # don't write this *old* schedule line
+			}
+			elsif ($sWorkingLine =~ /\}/) {
+				$bInSchedule = 0;
+				$bInGroup = 0;  # not really but let's be super safe
+				print CFG_NEW $sNewSchedule;
+				# no next, so that below we'll add the closing brace w/original indentation
+			}
+		}
+
+		$bInGroup = 1 if ($sWorkingLine =~ /\'$sGroup\'\s*=>\s*\{/);
+		$bInSchedule = 1 if ($bInGroup && ($sWorkingLine =~ /\'schedule\'\s*=>\s*\{/i));
+ 
+		print CFG_NEW $_;
+
+		#print "*** IN GROUP ***\n" if $bInGroup;
+		#print "*** IN SCHED ***\n" if $bInSchedule;
+	}
+
+	close(CFG_EXISTING);
+	close(CFG_NEW);
+
+	rename(CONFIG_FILE_NAME, CONFIG_FILE_NAME . '.prev') ||
+		syslog(LOG_INFO, "write_config_with_schedule($sGroup, ...) Error: Unable to backup existing config file;  file perms?");
+
+	return 1 if (rename(CONFIG_FILE_NAME . '.new', CONFIG_FILE_NAME));
+
+	syslog(LOG_INFO, "write_config_with_schedule($sGroup, ...) Error: Unable to rename new config file;  file perms?");
+	return 0;
+}
+
+
+sub swap_oncall_schedule($$) {
+	my $sPersonA = shift;
+	my $sPersonB = shift;
+	my $sGroupA = get_members_group($sPersonA);
+	my $sGroupB = get_members_group($sPersonB);
+    my ($iMinute, $iHour, $iDay, $iMonth, $iYear) = (localtime)[1..5];
+	my $iToday = sprintf("%d%02d%02d", $iYear+1900, $iMonth+1, $iDay);
+	my $iTodaySeconds = str2time($iToday);
+    my %hSchedule = %{$hStaff{$sGroupA}{schedule}};
+	my %hFullSchedule;
+	my @aAuto;
+
+	if (!$sGroupB) {
+		send_sms_page(get_number_from_name($sPersonA), "[That isn't a valid person in the paging system.]", $sPersonA);
+		return;
+	}
+
+	if ($sGroupA ne $sGroupB) {
+		send_sms_page(get_number_from_name($sPersonA), "[You can't swap schedules with someone from a different oncall group.]", $sPersonA);
+		return;
+	}
+
+	# build a searchable schedule hash
+
+    foreach (sort keys %hSchedule) {
+
+       if (($hSchedule{$_} =~ /^auto/i) || ($iTodaySeconds <= str2time($_) + 604000)) {
+			my $iDateSeconds = str2time($_);
+			my $iNumberPeopleInAuto = 0;
+
+            if ($hSchedule{$_} =~ /^auto/i) {
+				my $bAutoArrayDone = 0;
+
+				do {
+					my $bAutoPeopleSpecified = 0;
+                	my $sThisSched = $hSchedule{$_};
+
+                	while ($sThisSched =~ m,(\w+),g) {
+                    	next if ($1 =~ /^auto$/i);
+                    	my $sSchedPerson = $1;
+						$bAutoPeopleSpecified = 1;
+
+                    	foreach my $sMember (keys(%{$hStaff{$sGroupA}{members}})) {
+                        	if ($sSchedPerson =~ /$sMember/i) {
+								$hFullSchedule{$iDateSeconds} = $sMember;
+								$iDateSeconds += ONEWEEK;  # advance a week
+								push(@aAuto, $sMember) unless $bAutoArrayDone;
+                            	last;
+                        	}
+                    	}
+                	}
+
+					# auto with no details specified, i.e. just use group members in order
+                	unless ($bAutoPeopleSpecified) { 
+						foreach my $sMember (keys(%{$hStaff{$sGroupA}{members}})) {
+							$hFullSchedule{$iDateSeconds} = $sMember;
+							$iDateSeconds += ONEWEEK;
+							push(@aAuto, $sMember) unless $bAutoArrayDone;
+						}
+					}
+					$bAutoArrayDone = 1;
+				} while ($iTodaySeconds > $iDateSeconds - (ONEWEEK * scalar(@aAuto)));
+			}
+			else {
+                my $sEntry = $hSchedule{$_};
+                foreach my $sMember (keys(%{$hStaff{$sGroupA}{members}})) {
+                    if ($sEntry =~ /$sMember/i) {
+						$hFullSchedule{$iDateSeconds} = $sMember;
+						$iDateSeconds += ONEWEEK;
+                        last;
+                    }
+                }
+			}
+		}
+	}
+
+	# prune old entries in the past
+
+	foreach my $sDate (sort keys %hFullSchedule) {
+		delete $hFullSchedule{$sDate} if ($sDate <= $iTodaySeconds - ONEWEEK);
+	}
+
+	# find the two entries to swap in the schedule
+
+	my $iFirstDatePersonA = 0;
+	my $iFirstDatePersonB = 0;
+	foreach my $iDay (sort keys %hFullSchedule) {
+
+		if (!$iFirstDatePersonA && ($sPersonA =~ /$hFullSchedule{$iDay}/i)) {
+			$iFirstDatePersonA = $iDay;
+		}
+
+		if (!$iFirstDatePersonB && ($sPersonB =~ /$hFullSchedule{$iDay}/i)) {
+			$iFirstDatePersonB = $iDay;
+		}
+
+		last if ($iFirstDatePersonA && $iFirstDatePersonB);
+	}
+
+	if (!$iFirstDatePersonA) {
+		send_sms_page(get_number_from_name($sPersonA), "[You're not in the oncall schedule so you have nothing to swap.]", $sPersonA);
+		return '';
+	}
+
+	if (!$iFirstDatePersonB) {
+		send_sms_page(get_number_from_name($sPersonB), "[$sPersonB is not in the oncall schedule so they have nothing to swap.]", $sPersonB);
+		return '';
+	}
+
+	# perform the swap
+
+	$hFullSchedule{$iFirstDatePersonA} = get_members_full_name($sPersonB);
+	$hFullSchedule{$iFirstDatePersonB} = get_members_full_name($sPersonA);
+
+	# recreate the new schedule - find where to convert to "auto"
+
+	my $bFail;
+	my $iAutoDate = 0;
+	foreach my $iDay (sort keys %hFullSchedule) {
+		$bFail = 0;
+
+		foreach my $iIndex (1 .. scalar(@aAuto)) {
+			#print "   - looking at $iIndex on $iDay " . time2str("%x", $iDay + (($iIndex - 1) * ONEWEEK)) . "\n";
+			last unless defined($hFullSchedule{$iDay + (($iIndex - 1) * ONEWEEK)});
+			#print "     - looking at " . $hFullSchedule{$iDay + (($iIndex - 1) * ONEWEEK)} . "\n";
+			next if ($aAuto[$iIndex - 1] =~ /$hFullSchedule{$iDay + (($iIndex - 1) * ONEWEEK)}/i);
+			#print "     - failed\n";
+			$bFail = 1;
+			last;
+		}
+
+		if (!$bFail) {
+			$iAutoDate = $iDay;
+			last;
+		}
+	}
+
+	if (!$iAutoDate) {
+		my @aTemp = sort keys %hFullSchedule;
+		$iAutoDate = $aTemp[$#aTemp] + ONEWEEK;
+		$hFullSchedule{$iAutoDate} = $aAuto[0];
+	}
+
+	my $bConfigScheduleDone = 0;
+	my $sConfigSchedule = '';
+	my $sTextSchedule = '';
+	foreach my $iDay (sort keys %hFullSchedule) {
+		if ($iDay == $iAutoDate) {
+			my $sAutoList = '';
+			for my $sAutoEntry (@aAuto) {
+    			$sAutoEntry =~ s/([^|]+).*/$1/;
+				$sAutoList .= (length($sAutoList) ? ',' : '') . $sAutoEntry;
+			}
+			$sConfigSchedule .= "\t\t\t\t\'" . time2str("%Y%m%d", $iDay) . "\' => \'auto/$sAutoList\',\n" unless $bConfigScheduleDone;
+
+    		my $sPerson = $hFullSchedule{$iDay};
+    		$sPerson =~ s/([^|]+).*/$1/;
+			$sTextSchedule .= time2str("%x", $iDay) . ": $sPerson\n";
+			$bConfigScheduleDone = 1;
+		}	
+		else {
+    		my $sPerson = $hFullSchedule{$iDay};
+    		$sPerson =~ s/([^|]+).*/$1/;
+			$sConfigSchedule .= "\t\t\t\t\'" . time2str("%Y%m%d", $iDay) . "\' => \'$sPerson\',\n" unless $bConfigScheduleDone;
+			$sTextSchedule .= time2str("%x", $iDay) . ": $sPerson\n";
+		}
+	}
+
+	if (write_config_with_schedule($sGroupA, $sConfigSchedule)) {
+		send_sms_page(get_number_from_name($sPersonA), "[You've successfully swapped weeks with $sPersonB]", $sPersonA);
+		send_sms_page(get_number_from_name($sPersonA), $sTextSchedule, $sPersonA);
+
+		my $sFormalName = get_name_from_number(get_number_from_name($sPersonB));
+		send_swap_email($hStaff{$sGroupA}{email}, "$sPersonA has swapped weeks with $sFormalName.\n\nThe new schedule for $sGroupA is as follows:\n\n" . $sTextSchedule)
+			if defined($hStaff{$sGroupA}{email});
+
+		# send ourselves a sighup - will reinstantiate our daemon and reread the config
+		syslog(LOG_INFO, "Sending ourselves a SIGHUP to reread the config");
+		kill('HUP', $$);
+	}
+	else {
+		send_sms_page(get_number_from_name($sPersonA), "[Unable to update the schedule.  Please notify your administrator.]", $sPersonA);
+	}
+
+	return '';
+}
+
+
 
 sub get_name_from_number($) {
     my $sNumber = shift;
+
+    return "PI" if ($sNumber eq "9999999999");
 
     if (length($sNumber) > 9) {
         foreach my $sGroup (keys %hStaff) {
@@ -399,7 +808,7 @@ sub handler_sighup() {
     syslog(LOG_INFO, "Total pages sent for $g_iMetricDay were $g_iMetricCount") if $g_iMetricDay;
     syslog(LOG_DEBUG, "daemon caught SIGHUP (execing $0)");
     closelog();    # syslog
-	save_state();
+	save_state(1);
 	exec("$0 hup");
 	exit;
 }
@@ -414,7 +823,7 @@ sub handler_daemon_exit() {
 	syslog(LOG_INFO, "Total pages sent for $g_iMetricDay were $g_iMetricCount") if $g_iMetricDay;
 	syslog(LOG_DEBUG, 'daemon exiting on signal');
 	closelog();    # syslog
-	save_state();
+	save_state(0);
 	exit;
 }
 
@@ -427,6 +836,10 @@ sub handler_clear_rooms() {
 
 	foreach (keys %g_hRoomExpirations) {
 		delete($g_hRoomExpirations{$_});
+	}
+
+	foreach (keys %g_hBroadcastRoomOwner) {
+		delete($g_hBroadcastRoomOwner{$_});
 	}
 
 	foreach (keys %g_hRoomHistory) {
@@ -444,6 +857,8 @@ sub handler_clear_rooms() {
 	foreach (keys %g_hTicketForRoom) {
 		delete($g_hTicketForRoom{$_});
 	}
+
+	$g_iInitBroadcastOwner = 0;
 	syslog(LOG_INFO, "Caught SIGHUP: all rooms, timers/escalations, history cleared.");
 }
 
@@ -456,6 +871,8 @@ sub delete_room($) {
 	delete $g_hRoomHistory{$iRoom};
 	delete $g_hTicketForRoom{$iRoom} if (defined $g_hTicketForRoom{$iRoom});
 	delete $g_hTimerForRoom{$iRoom} if (defined $g_hTimerForRoom{$iRoom});
+	delete $g_hBroadcastRoomOwner{$iRoom} if (defined $g_hBroadcastRoomOwner{$iRoom});
+	$g_iMaintenanceRoomNumber = -1 if ($iRoom == $g_iMaintenanceRoomNumber);
 }
 
 
@@ -528,10 +945,36 @@ sub send_vacation_email($$) {
 		$tSMTP->datasend("This person is now restored to all paging groups.\n\n");
 	}
 
-	$tSMTP->datasend("The paging command '-?' can be used to show everyone that currently has vacation\n");
+	$tSMTP->datasend("The paging command '?vacation' can be used to show everyone that currently has vacation\n");
 	$tSMTP->datasend("days set.\n");
 	$tSMTP->dataend();
 	$tSMTP->quit();
+}
+
+
+
+sub send_swap_email($$) {
+	my $sAddress = shift;
+	my $sMessage = shift;
+
+
+	if ($sAddress =~ /\b([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,4})\b/i) {
+		my $sRecipient = $1;
+		my $tSMTP = Net::SMTP->new($CFGsEmergencySMTPServer);
+		$tSMTP->mail($CFGsEmergencySMTPFrom);
+
+		$tSMTP->to($sRecipient) unless TEST_RUN;
+		$tSMTP->to($CFGsAdminEmail);
+
+		$tSMTP->data();
+		$tSMTP->datasend("From: <$CFGsEmergencySMTPFrom>\n");
+		$tSMTP->datasend("To: $sRecipient\n");
+		$tSMTP->datasend("Subject: Paging system OnCall schedule change\n");
+		$tSMTP->datasend("\n");
+		$tSMTP->datasend($sMessage);
+		$tSMTP->dataend();
+		$tSMTP->quit();
+	}
 }
 
 
@@ -584,6 +1027,22 @@ sub sleeping_hours() {
 }
 
 
+# this generates an English representation of a rounded calculation
+sub print_time($) {
+	my $iSeconds = shift;
+	my $iValue = $iSeconds + ($iSeconds * 0.07);  # buffer up a bit
+	my $iCurrentUnit = 1;
+	my @aMultipliers = (1, 60, 60, 24, 7, 4, 12);
+	my @aUnits = ('second', 'minute', 'hour', 'day', 'week', 'month', 'year');
+	
+	while ($iValue >= $aMultipliers[$iCurrentUnit]) {
+		$iValue = int($iValue / $aMultipliers[$iCurrentUnit]);
+		++$iCurrentUnit;
+	}
+
+	return("$iValue " . $aUnits[$iCurrentUnit - 1] . ($iValue > 1 ? 's' : ''));
+}
+
 
 sub get_history($;$) {
 	my $iRoom = shift;
@@ -617,8 +1076,8 @@ sub handle_paging_commands($$) {
 	my $sSpeaker = shift;
 	my $sMessage = shift;
 
-	# if the message starts with a colon take it literally;  ignore commands
-	return 0 if ($sMessage =~ /^:/);
+	# if the message starts with a ! take it literally;  ignore commands
+	return 0 if ($sMessage =~ /^\!/);
 
 	# handle ambiguous name references
 	my $sAmbiguousReply = '';
@@ -630,12 +1089,153 @@ sub handle_paging_commands($$) {
 	}
 
 	if ($sAmbiguousReply) {
-		send_sms_page(get_number_from_name($sSpeaker), '[' . $sAmbiguousReply . "Your message was NOT sent.]");
+		send_sms_page(get_number_from_name($sSpeaker), '[' . $sAmbiguousReply . "Your message was NOT sent.]", $sSpeaker);
+		return 1;
+	}
+
+	# setup a broadcast room for single person replies
+	if ($sMessage =~ /^\^/) {
+		$g_iInitBroadcastOwner = $sSpeaker;
+		return 0;
+	}
+
+	# swap oncall weeks with someone on your team
+	if ($sMessage =~ /^\s*:swap (\w+)/) {
+		swap_oncall_schedule($sSpeaker, $1);
+		return 1;
+	}
+
+	# no regex
+	if ($sMessage =~ /^\s*:(?:nore|noregex)\s+(\d+[shmdw]{0,1})\s+(.*)/) {
+		if ($2) {
+			my ($iSeconds, $sText) = parse_user_time($1);
+			$g_iRegexBlockExpire = time() + $iSeconds;
+			$g_sRegexBlock = $2;
+			$g_sRegexBlock =~ s,/(.*)/,$1,;    # lose the delimiting slashes if the user specified them
+
+        	my $bSleepyTime = sleeping_hours();
+        	my $iSpeakersRoom = $g_hPeoplesRooms{$sSpeaker};
+
+        	foreach (keys %g_hPeoplesRooms) {
+            	if ($g_hPeoplesRooms{$_} == $iSpeakersRoom) {
+                	next if ($_ eq 'nagios');
+                	next if ($_ eq $sSpeaker);
+
+                	send_sms_page(get_number_from_name($_), "[$sSpeaker has silenced /$g_sRegexBlock/ alerts for the next $sText]", $sSpeaker) unless $bSleepyTime;
+            	}
+        	}
+
+        	send_sms_page(get_number_from_name($sSpeaker), "[/$g_sRegexBlock/ alerts silenced for the next $sText]", $sSpeaker);
+        	return 1;
+		}
+	}
+
+	# recovery snooze time
+	if ($sMessage =~ /^\s*:sleep/) {
+		$g_iRecoverySnoozeTime = time() + 10800;  # 3 hours
+		syslog(LOG_INFO, "Setting RecoverySnoozeTime = $g_iRecoverySnoozeTime");
+		send_sms_page(get_number_from_name($sSpeaker), "[Nagios load & recoveries silenced for everyone for the next 3 hours]", $sSpeaker);
+		return 1;
+	}
+
+	# setup a maintenance window room
+	if ($sMessage =~ /^\s*:maint(?:enance)*/) {
+		combine_rooms($g_iMaintenanceRoomNumber, $sSpeaker) if ($g_iMaintenanceRoomNumber > -1);
+		combine_rooms($sSpeaker, 'nagios');
+
+		# combine_rooms() sets up pending notifications that we don't want here
+		foreach my $sPerson (keys %g_hPendingNotifies) {
+			delete $g_hPendingNotifies{$sPerson};
+		}
+
+		$g_iMaintenanceRoomNumber = $g_hPeoplesRooms{$sSpeaker};
+	    $g_hRoomExpirations{$g_iMaintenanceRoomNumber} = time() + 5400;
+
+        foreach (keys %g_hPeoplesRooms) {
+            if ($g_hPeoplesRooms{$_} == $g_iMaintenanceRoomNumber) {
+                next if ($_ eq 'nagios');
+
+                send_sms_page(get_number_from_name($_), "[" . ($_ eq $sSpeaker ? 'You have' : "$sSpeaker has") . " designated this a maintenance window room]", $sSpeaker); 
+            }
+        }
+
+		return 1;
+	}
+
+	# no nagios alerts (problem or recovery) for the specified number of hours
+	if ($sMessage =~ /^\s*:\s*nonagios\s+(\d+[shmdw]{0,1})/) {
+        my ($iSeconds, $sText) = parse_user_time($1);
+		$g_iNagiosSnoozeTime = time() + $iSeconds;
+		syslog(LOG_INFO, "Setting NagiosSnoozeTime = $g_iNagiosSnoozeTime");
+
+        my $bSleepyTime = sleeping_hours();
+        my $iSpeakersRoom = $g_hPeoplesRooms{$sSpeaker};
+
+        foreach (keys %g_hPeoplesRooms) {
+            if ($g_hPeoplesRooms{$_} == $iSpeakersRoom) {
+                next if ($_ eq 'nagios');
+                next if ($_ eq $sSpeaker);
+
+                send_sms_page(get_number_from_name($_), "[$sSpeaker has silenced nagios alerts for the next $sText]", $sSpeaker) unless $bSleepyTime;
+            }
+        }
+
+		send_sms_page(get_number_from_name($sSpeaker), "[Nagios alerts silenced for the next $sText]", $sSpeaker);
+		return 1;
+	}
+
+	# re-enable nagios alerts
+	if ($sMessage =~ /^\s*:\s*nagios/) {
+		syslog(LOG_INFO, "Canceling NagiosSnoozeTime");
+        my $bSleepyTime = sleeping_hours();
+        my $iSpeakersRoom = $g_hPeoplesRooms{$sSpeaker};
+
+        foreach (keys %g_hPeoplesRooms) {
+            if ($g_hPeoplesRooms{$_} == $iSpeakersRoom) {
+                next if ($_ eq 'nagios');
+                next if ($_ eq $sSpeaker);
+
+                send_sms_page(get_number_from_name($_), "[$sSpeaker has restored nagios alerts.]", $sSpeaker) unless $bSleepyTime;
+            }
+        }
+
+		send_sms_page(get_number_from_name($sSpeaker), ($g_iNagiosSnoozeTime ? "[Nagios alerts restored.]" : "[Nagios alerts are already active.]"), $sSpeaker);
+		$g_iNagiosSnoozeTime = 0;
+		return 1;
+	}
+
+	# snooze - nagios silence macro for 15 minutes
+	if ($sMessage =~ /^\s*:\s*snooze/) {
+		$g_iNagiosSnoozeTime = time() + 900;
+		syslog(LOG_INFO, "Setting NagiosSnoozeTime = $g_iNagiosSnoozeTime");
+
+        my $bSleepyTime = sleeping_hours();
+        my $iSpeakersRoom = $g_hPeoplesRooms{$sSpeaker};
+
+        foreach (keys %g_hPeoplesRooms) {
+            if ($g_hPeoplesRooms{$_} == $iSpeakersRoom) {
+                next if ($_ eq 'nagios');
+				next if ($_ eq $sSpeaker);
+
+                send_sms_page(get_number_from_name($_), "[$sSpeaker has silenced nagios alerts for 15 minutes.]", $sSpeaker) unless $bSleepyTime;
+            }
+        }
+
+		send_sms_page(get_number_from_name($sSpeaker), "[Nagios alerts " . ($bSleepyTime ? 'silently ' : '') . "silenced for 15 minutes.]", $sSpeaker);
+		return 1;
+	}
+
+	# set an auto relpy
+	if ($sMessage =~ /^\s*:\s*(?:autoreply|ar)\s+(\d+[shmdw]{0,1})\s+(.*)/) {
+        my ($iSeconds, $sText) = parse_user_time($1);
+ 		$g_hAutoReply{$sSpeaker} = { 'expire' => (time() + $iSeconds), 'reply' => $2 };
+		syslog(LOG_INFO, "$sSpeaker set an auto reply for $sText: $2");
+		send_sms_page(get_number_from_name($sSpeaker), "[Your auto reply is set for the next $sText]", $sSpeaker);
 		return 1;
 	}
 
 	# send someone history of your room - pulls them into the room if they're not already
-	if ($sMessage =~ /^\+(\w+)/) {
+	if (($sMessage =~ /^\s*\+\s*(\w+)/) || ($sMessage =~ /^\s*:\s*history\s+(\w+)/)) {
 		my $sLateArriver = $1;
 		my $sCellPhone = get_number_from_name($sLateArriver);
 
@@ -646,13 +1246,13 @@ sub handle_paging_commands($$) {
 				syslog(LOG_INFO, "Sending chat history to $sLateArriver from $sSpeaker");
 				
 				if ($#aRoomHistory > -1) {
-					send_sms_page($sCellPhone, "[CHAT HISTORY via $sSpeaker]+");
+					send_sms_page($sCellPhone, "[CHAT HISTORY via $sSpeaker]+", $sSpeaker);
 					for my $iIdx ($iStartIdx .. $#aRoomHistory) {
-						send_sms_page($sCellPhone, "+" . $aRoomHistory[$iIdx]);
+						send_sms_page($sCellPhone, "+" . $aRoomHistory[$iIdx], $sSpeaker);
 					}
 				}
 				my $iMsgCount = $#aRoomHistory - $iStartIdx + 1;
-				# send_sms_page(get_number_from_name($sSpeaker), "[Sent $iMsgCount message" . ($iMsgCount == 1 ? '' : 's') . ']');
+				# send_sms_page(get_number_from_name($sSpeaker), "[Sent $iMsgCount message" . ($iMsgCount == 1 ? '' : 's') . ']', $sSpeaker);
 
 				# is there an escalation we may need to disarm too?
        			foreach my $iEscalationRoomNumber (keys %g_hTimerForRoom) {
@@ -669,38 +1269,40 @@ sub handle_paging_commands($$) {
 			process_notifies($sSpeaker, "Chat History: $sSpeaker -> $sOfficialName");
 		}
 		else {
-			send_sms_page(get_number_from_name($sSpeaker), "[I don't have a number for the person you want to send message history to]");
+			send_sms_page(get_number_from_name($sSpeaker), "[I don't have a number for the person you want to send message history to]", $sSpeaker);
 		}
 		return 1;
 	}
 
 	# email someone history of your room
-	if ($sMessage =~ /^\s*>([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,4})\b\s*$/i) {
+	if (($sMessage =~ /^\s*>\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,4})\b\s*$/i) || ($sMessage =~ /^\s*:\s*email\s+([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,4})\b\s*$/i)) {
 		send_history_email($sSpeaker, $1);
-		send_sms_page(get_number_from_name($sSpeaker), "[Room history emailed to $1]");
+		send_sms_page(get_number_from_name($sSpeaker), "[Room history emailed to $1]", $sSpeaker);
 		return 1;
 	}
 
 	# all rooms status
-	if ($sMessage =~ /^\s*=\s*$/) {
+	if ($sMessage =~ /^\s*\?\s*room/) {
 		syslog(LOG_INFO, "Sending all room status to $sSpeaker");
-		send_sms_page(get_number_from_name($sSpeaker), '[' . room_status(-1) . ']');
+		send_sms_page(get_number_from_name($sSpeaker), '[' . room_status(-1) . ']', $sSpeaker);
 		return 1;
 	
 	}
 
 	# show help
 	if ($sMessage =~ /^\s*\?\s*$/) {
-		my $sHelp1 = "Silencing\n!x Skip x recoveries\n! Skip all recoveries\n-x Set vacation days\n- Leave room\n!disband Disband room\n\nRT\n~? Get ticket #\n~Txt Unlogged\n~! Stop logging";
-		my $sHelp2 = "Status Info\n= All rooms\n-? Vacation\n?? On Call\n?name Define name\n\nMisc\n+Name Send history\n>addy Email history\n:Txt Literal (ignore cmds & names)";
+		#my $sHelp1 = "Silencing\n!x Skip x recoveries\n! Skip all recoveries\n-x Set vacation days\n- Leave room\n!disband Disband room\n\nRT\n~? Get ticket #\n~Txt Unlogged\n~! Stop logging";
+		#my $sHelp2 = "Status Info\n= All rooms\n-? Vacation\n?? On Call\n?name Define name\n\nMisc\n+Name Send history\n>addy Email history\n:Txt Literal (ignore cmds & names)";
+		my $sHelp1 = ":norecovery X\n:recovery\n:vacation X\n?vacation\n?rooms\n?oncall\n:leave\n:stoprt\n?rt\n:history NAME\n";
+		my $sHelp2 = ":email ADDR\n!no log\n:nonagios X\n:nagios\n:snooze\n:autoreply\n:noregex X /re/";
 
-		send_sms_page(get_number_from_name($sSpeaker), $sHelp1);
-		send_sms_page(get_number_from_name($sSpeaker), $sHelp2);
+		send_sms_page(get_number_from_name($sSpeaker), $sHelp1, $sSpeaker);
+		send_sms_page(get_number_from_name($sSpeaker), $sHelp2, $sSpeaker);
 		return 1;
 	} 
 
 	# show who's on call
-	if ($sMessage =~ /^\s*\?\?\s*$/) {
+	if ($sMessage =~ /^\s*\?\s*oncall/) {
 		my $sOnCallMessage = '';
 		foreach my $sGroup (keys %hStaff) {
 			if (defined $hStaff{$sGroup}{schedule}) {
@@ -708,10 +1310,42 @@ sub handle_paging_commands($$) {
 			}
 		}
 		$sOnCallMessage = '[No teams have On Call schedules defined]' unless $sOnCallMessage;
-		send_sms_page(get_number_from_name($sSpeaker), "[$sOnCallMessage]");
+		send_sms_page(get_number_from_name($sSpeaker), "[$sOnCallMessage]", $sSpeaker);
+		send_sms_page(get_number_from_name($sSpeaker), get_oncall_schedule(get_members_group($sSpeaker)), $sSpeaker);
 		return 1;
 	} 
  
+	# show vacation days
+	if ($sMessage =~ /^\s*\?\s*vacation/) {
+		my $sVacations = vacation_status();
+		send_sms_page(get_number_from_name($sSpeaker), $sVacations ? $sVacations : "[No one currently has vacation time configured]", $sSpeaker);
+
+		return 1;
+	}
+
+    # RT - show ticket number
+    if ($sMessage =~ /^\s*\?\s*rt/) {
+        if (defined $g_hTicketForRoom{$g_hPeoplesRooms{$sSpeaker}}) {
+            send_sms_page(get_number_from_name($sSpeaker), "[This room is logging to RT ticket " . $g_hTicketForRoom{$g_hPeoplesRooms{$sSpeaker}} . ".]", $sSpeaker);
+        }
+        else {
+            send_sms_page(get_number_from_name($sSpeaker), "[This room has no association to an RT ticket.]", $sSpeaker);
+        }
+        return 1;
+    }
+
+	# send stats on filtered pages
+	if ($sMessage =~ /^\s*\?\s*(sleep|filter)\s*$/i) {
+		my $iNow = time();
+		my $sStatus = 'All nagios: ' . (($g_iNagiosSnoozeTime > $iNow) ? print_time($g_iNagiosSnoozeTime - $iNow) : 'none') . "\n";
+		$sStatus .=   'Load/Rcvry: ' . (($g_iRecoverySnoozeTime > $iNow) ? print_time($g_iRecoverySnoozeTime - $iNow) : 'none') . "\n";
+		$sStatus .=   'Regex: ' . (($g_iRegexBlockExpire > $iNow) ? ("/$g_sRegexBlock/, " . print_time($g_iRegexBlockExpire - $iNow)) : 'none') . "\n";
+
+        send_sms_page(get_number_from_name($sSpeaker), "[$sStatus]", $sSpeaker);
+
+		return 1;
+	}
+
     # send a group or member definition
     if ($sMessage =~ /^\s*\?\s*(\w+)/) {
         my $sGroup = $1;
@@ -719,46 +1353,36 @@ sub handle_paging_commands($$) {
         tie my(%hCaselessStaff), 'Hash::Case::Preserve';
         %hCaselessStaff = %hStaff;
         if ((defined $hCaselessStaff{$sGroup}) && (defined $hCaselessStaff{$sGroup}{members})) {
-            send_sms_page(get_number_from_name($sSpeaker), "[$sGroup = " . join(', ', sort keys %{$hCaselessStaff{$sGroup}{members}}) . ']');
+            # send_sms_page(get_number_from_name($sSpeaker), "[$sGroup = " . join(', ', sort keys %{$hCaselessStaff{$sGroup}{members}}) . ']', $sSpeaker);
+            send_sms_page(get_number_from_name($sSpeaker), "[$sGroup = " . join(', ', sort map { s/([^|]+).*/$1/; $_; } keys %{$hCaselessStaff{$sGroup}{members}}) . ']', $sSpeaker);
         }
         elsif ((defined $hCaselessStaff{$sGroup}) && (defined $hCaselessStaff{$sGroup}{alias})) {
-            send_sms_page(get_number_from_name($sSpeaker), "[$sGroup = " . $hCaselessStaff{$sGroup}{alias} . ']');
+            send_sms_page(get_number_from_name($sSpeaker), "[$sGroup = " . $hCaselessStaff{$sGroup}{alias} . ']', $sSpeaker);
         }
         elsif (my $sNumber = get_number_from_name($sGroup)) {
-			send_sms_page(get_number_from_name($sSpeaker), '[' . get_name_from_number($sNumber) . " = " . pretty_print_number($sNumber) . "]"); 
+			send_sms_page(get_number_from_name($sSpeaker), '[' . get_name_from_number($sNumber) . " = " . pretty_print_number($sNumber) . "]", $sSpeaker); 
 		}
 		else {
-            send_sms_page(get_number_from_name($sSpeaker), "[There is no defined group or alias called $sGroup]");
+            send_sms_page(get_number_from_name($sSpeaker), "[There is no defined group or alias called $sGroup]", $sSpeaker);
         }
 
 		return 1;
     }
 
 	# RT - remove the ticket assocation from a room early (pre-room expiration)
-	if ($sMessage =~ /^~\!\s*$/) {
+	if ($sMessage =~ /^:\s*(stoprt|nort)/) {
 		if (defined $g_hTicketForRoom{$g_hPeoplesRooms{$sSpeaker}}) {
 			delete($g_hTicketForRoom{$g_hPeoplesRooms{$sSpeaker}});
-			send_sms_page(get_number_from_name($sSpeaker), "[This room is no longer logged to an RT ticket.]");
+			send_sms_page(get_number_from_name($sSpeaker), "[This room is no longer logged to an RT ticket.]", $sSpeaker);
 		}
 		else {
-            send_sms_page(get_number_from_name($sSpeaker), "[This room has no association to an RT ticket.]");
-		}
-		return 1;
-	}
-
-	# RT - show ticket number
-	if ($sMessage =~ /^~\?\s*$/) {
-		if (defined $g_hTicketForRoom{$g_hPeoplesRooms{$sSpeaker}}) {
-			send_sms_page(get_number_from_name($sSpeaker), "[This room is logging to RT ticket " . $g_hTicketForRoom{$g_hPeoplesRooms{$sSpeaker}} . ".]");
-		}
-		else {
-			send_sms_page(get_number_from_name($sSpeaker), "[This room has no association to an RT ticket.]");
+            send_sms_page(get_number_from_name($sSpeaker), "[This room has no association to an RT ticket.]", $sSpeaker);
 		}
 		return 1;
 	}
 
 	# remove myself from the room
-	if ($sMessage =~ /^\s*-\s*$/) {
+	if (($sMessage =~ /^\s*-\s*$/) || ($sMessage =~ /^\s*:\s*leave/)) {
 		my $bSleepyTime = sleeping_hours();
 		my $iSpeakersRoom = $g_hPeoplesRooms{$sSpeaker};
 		delete $g_hPeoplesRooms{$sSpeaker};
@@ -772,10 +1396,10 @@ sub handle_paging_commands($$) {
 
 				$iPeople++;
 				$sLastPersonInRoom = $_;
-				send_sms_page(get_number_from_name($_), "[$sSpeaker left the room]") unless $bSleepyTime;
+				send_sms_page(get_number_from_name($_), "[$sSpeaker left the room]", $sSpeaker) unless $bSleepyTime;
 			} 
 		}
-		send_sms_page(get_number_from_name($sSpeaker), "[You " . ($bSleepyTime ? 'silently ' : '') . "left the room/conversation]");
+		send_sms_page(get_number_from_name($sSpeaker), "[You " . ($bSleepyTime ? 'silently ' : '') . "left the room/conversation]", $sSpeaker);
 
 		# zero or 1 person is left in the room, let's clean it up
 		unless ($iPeople > 1) {
@@ -788,53 +1412,61 @@ sub handle_paging_commands($$) {
 	}
 
 	# update vacation days
-	if ($sMessage =~ /^\s*-\s*(\d+)\s*$/) {
-		my $sVacaDays = $1;
+	if ($sMessage =~ /^\s*:\s*vaca(?:tion)*\s+(\d+[shmdw]{0,1})/) {
+        my ($iSeconds, $sText) = parse_user_time($1);
 
-		if ($sVacaDays) {
-			$g_hVacationDays{$sSpeaker} = $sVacaDays;
+		if ($iSeconds && ($iSeconds < 86400)) {
+			send_sms_page(get_number_from_name($sSpeaker), "[Minimum vacation is 1 day (e.g. 1d) and elapses at midnight]", $sSpeaker);
+			return 1;
+		}
+
+		my $iRoundedDays = int($iSeconds / 86400);
+        ($iSeconds, $sText) = parse_user_time($iRoundedDays . 'd');
+
+		if ($iRoundedDays) {
+			$g_hVacationDays{$sSpeaker} = $iRoundedDays;
 		}
 		else {
 			delete($g_hVacationDays{$sSpeaker});
 		}
-		syslog(LOG_INFO, "Setting $sVacaDays vacation days for $sSpeaker");
-		send_sms_page(get_number_from_name($sSpeaker), ($sVacaDays ? "[Your vacation days are now set to $sVacaDays]" : "[Your vacation settings have been removed]"));
-		send_vacation_email($sSpeaker, $sVacaDays);
+		syslog(LOG_INFO, "Setting $iRoundedDays vacation days for $sSpeaker");
+		send_sms_page(get_number_from_name($sSpeaker), ($iRoundedDays? "[Your vacation is now set to $sText]" : "[Your vacation settings have been removed]"), $sSpeaker);
+		send_vacation_email($sSpeaker, $iRoundedDays);
 
 		return 1;
 	}
 
-	# show vacation days
-	if ($sMessage =~ /^\s*-\s*\?$/) {
-		my $sVacations = vacation_status();
-		send_sms_page(get_number_from_name($sSpeaker), $sVacations ? $sVacations : "[No one currently has vacation time configured]");
-
-		return 1;
-	}
 
 	# silence recovery pages
-	if ($sMessage =~ /^\s*\!\s*(\d*)$/) {
+	if ($sMessage =~ /^\s*:\s*norecovery(?:\s+(\d+))*$/) {
 		if ($1 > 0) {
 			$g_hSilentRecovery{$sSpeaker} = $1;
 			syslog(LOG_INFO, "Silencing $1 RECOVERY page(s) for $sSpeaker");
-			send_sms_page(get_number_from_name($sSpeaker), "[The next $1 recovery page" . ($1 > 1 ? 's are' : ' is') .  " now silenced for you]");
+			send_sms_page(get_number_from_name($sSpeaker), "[The next $1 recovery page" . ($1 > 1 ? 's are' : ' is') .  " now silenced for you]", $sSpeaker);
 		}
 		elsif (($1 eq '0') || (defined $g_hSilentRecovery{$sSpeaker})) {
 			delete($g_hSilentRecovery{$sSpeaker});
 			syslog(LOG_INFO, "Restoring RECOVERY pages for $sSpeaker");
-			send_sms_page(get_number_from_name($sSpeaker), "[Recovery pages are now restored for you]");
+			send_sms_page(get_number_from_name($sSpeaker), "[Recovery pages are now restored for you]", $sSpeaker);
 		}
 		else {
 			$g_hSilentRecovery{$sSpeaker} = -1;
 			syslog(LOG_INFO, "Silencing RECOVERY pages for $sSpeaker");
-			send_sms_page(get_number_from_name($sSpeaker), "[Recovery pages are now silenced for you]");
+			send_sms_page(get_number_from_name($sSpeaker), "[Recovery pages are now silenced for you]", $sSpeaker);
 		}
 
 		return 1;
 	}
 
+	if ($sMessage =~ /^\s*:\s*recovery/) {
+            delete($g_hSilentRecovery{$sSpeaker}) if (defined $g_hSilentRecovery{$sSpeaker});
+            syslog(LOG_INFO, "Restoring RECOVERY pages for $sSpeaker");
+            send_sms_page(get_number_from_name($sSpeaker), "[Recovery pages are now restored for you]", $sSpeaker);
+			return 1;
+	}
+
 	# disband room
-	if ($sMessage =~ /^\s*\!disband\s*$/i) {
+	if ($sMessage =~ /^\s*:disband/i) {
         my $bSleepyTime = sleeping_hours();
         my $iSpeakersRoom = $g_hPeoplesRooms{$sSpeaker};
         delete $g_hPeoplesRooms{$sSpeaker};
@@ -845,19 +1477,19 @@ sub handle_paging_commands($$) {
         		delete $g_hPeoplesRooms{$_};
                 next if ($_ eq 'nagios');
 
-                send_sms_page(get_number_from_name($_), "[$sSpeaker has disbanded the room]") unless $bSleepyTime;
+                send_sms_page(get_number_from_name($_), "[$sSpeaker has disbanded the room]", $sSpeaker) unless $bSleepyTime;
             } 
         }
 
-        send_sms_page(get_number_from_name($sSpeaker), "[You " . ($bSleepyTime ? 'silently ' : '') . "disbanded the room]");
+        send_sms_page(get_number_from_name($sSpeaker), "[You " . ($bSleepyTime ? 'silently ' : '') . "disbanded the room]", $sSpeaker);
         syslog(LOG_INFO, "Cleaning up room $iSpeakersRoom");
         delete_room($iSpeakersRoom);
 
         return 1;
 	}
 
-	if ($sMessage =~ /^[-:+?=~!]/) {
-		send_sms_page(get_number_from_name($sSpeaker), "[Invalid command]");
+	if ($sMessage =~ /^[:?]/) {
+		send_sms_page(get_number_from_name($sSpeaker), "[Invalid command]", $sSpeaker);
 		return 1;
 	}
 
@@ -1042,7 +1674,7 @@ sub room_status(;$) {
 				}
 			}
 		}
-
+	
 		$sFullResult .= (length($sFullResult) ? "\n" : '') . ($iTargetRoom > -1 ? '' : "Room $iRoom: ") . join(', ', sort @aRoomOccupants);
 	}
 
@@ -1051,14 +1683,32 @@ sub room_status(;$) {
 
 
 
-sub save_state() {
+sub save_state($) {
+	my $sFullSave = shift;
+
+	unless ($sFullSave) {
+		%g_hTimerForRoom = ();
+		%g_hPeoplesRooms = ();
+		%g_hRoomExpirations = ();
+		%g_hRoomHistory = ();
+	}
+
 	my $SilentState = freeze(%g_hSilentRecovery);
 	my $VacaState = freeze(%g_hVacationDays);
+	my $TimerForRoom = freeze(%g_hTimerForRoom);
+	my $PeoplesRooms = freeze(%g_hPeoplesRooms);
+	my $RoomExpirations = freeze(%g_hRoomExpirations);
+	my $RoomHistory = freeze(%g_hRoomHistory);
+
 	if (open(STATE, ">/tmp/$g_sAppName.state")) {
 		print STATE $SilentState . "\n";
 		print STATE $VacaState . "\n";
 		print STATE $g_iMetricDay . "\n";
 		print STATE $g_iMetricCount . "\n";
+		print STATE $TimerForRoom . "\n";
+		print STATE $PeoplesRooms . "\n";
+		print STATE $RoomExpirations . "\n";
+		print STATE $RoomHistory . "\n";
 		close(STATE);
 	}
 }
@@ -1071,15 +1721,30 @@ sub restore_state() {
 		my $VacaState = <STATE>;
 		my $MetricDay = <STATE>;
 		my $MetricCount = <STATE>;
+		my $TimerForRoom = <STATE>;
+		my $PeoplesRooms = <STATE>;
+		my $RoomExpirations = <STATE>;
+		my $RoomHistory = <STATE>;
 		close(STATE);
 		chomp($SilentState);
 		chomp($VacaState);
 		chomp($MetricDay);
 		chomp($MetricCount);
+		chomp($TimerForRoom);
+		chomp($PeoplesRooms);
+		chomp($RoomExpirations);
+		chomp($RoomHistory);
+
 		%g_hSilentRecovery = thaw($SilentState);
 		%g_hVacationDays = thaw($VacaState);
 		$g_iMetricDay = $MetricDay;
 		$g_iMetricCount = $MetricCount;
+		%g_hTimerForRoom = thaw($TimerForRoom);
+		%g_hPeoplesRooms = thaw($PeoplesRooms);
+		%g_hRoomExpirations = thaw($RoomExpirations);
+		%g_hRoomHistory = thaw($RoomHistory);
+
+		syslog(LOG_INFO, "successfully restored state");
 	}
 }
 
@@ -1109,15 +1774,30 @@ sub vacation_status() {
 
 
 
-sub strip_hidden_aliases($) {
+sub strip_hidden_aliases($$) {
 	my $sMessage = shift;
+	my $sCompressedMessage = shift;
+
 	my $sAt = $CFGbRequireAtForNames ? '\@' : '\b';
 
 	foreach my $sGroup (keys %hStaff) {
 
-		if (defined($hStaff{$sGroup}{alias}) && defined($hStaff{$sGroup}{hidden}) && ($sMessage =~ /$sAt($sGroup)\b/i)) {
-			$sMessage =~ s/$sAt($sGroup)\b//gi;
-			syslog(LOG_INFO, "redacting hidden alias $sGroup");
+		if (defined($hStaff{$sGroup}{alias}) && defined($hStaff{$sGroup}{hidden})) {
+
+			if ($sMessage =~ /$sAt($sGroup)\b/i) {
+				$sMessage =~ s/$sAt($sGroup)\b//gi;
+				syslog(LOG_INFO, "redacting hidden alias $sGroup");
+			}
+			elsif ($sCompressedMessage =~ /$sAt($sGroup)\b/i) {
+				$sCompressedMessage =~ s/$sAt($sGroup)\b//gi;
+				$sCompressedMessage =~ s/\s{2,}/ /g;
+				$sMessage = $sCompressedMessage;
+				syslog(LOG_INFO, "redacting hidden compressed alias $sGroup");
+				# the SMS gateway inserts \n's at random points between words.  if that
+				# falls in the middle of the word we're looking for we won't find it.
+				# so we also check in the compressed version just to be sure.  if found
+				# there we'll lose the \n formatting.  oh well.
+			}
 		}
 	}
 
@@ -1150,9 +1830,10 @@ sub expire_rooms() {
 
 
 
-sub send_sms_page($$) {
+sub send_sms_page($$;$) {
 	my $iCellNumber = shift;
 	my $sMessage = shift;
+    my $sSpeaker = shift || '0';
 	my $tBrowser = LWP::UserAgent->new;
 	my $iNow = time();
 	use constant THROTTLE_PAGES => 5;
@@ -1163,9 +1844,47 @@ sub send_sms_page($$) {
 	}
 
 	$sMessage = substr($sMessage, 0, 160);
+	$sMessage =~ s/\s{2,}/ /g;
+	my $sCompressedMessage = $sMessage;
+	$sCompressedMessage =~ s/\n//g;
 
-	if ($sMessage =~ /^(PROBLEM|RECOVERY)/) {
+	if (($sSpeaker eq 'nagios') || ($sSpeaker =~ /^\d+$/)) {   # /\d+/ is an escalation firing
 
+		# FILTER:  Recovery & Load
+		if ($g_iRecoverySnoozeTime && ($g_iRecoverySnoozeTime > $iNow) && ($sCompressedMessage =~ /(^([-+!]{0,1}RECOVERY)|(\[Broadcast mode)|(\[Audience is now))|(System Load)/)) {
+			syslog(LOG_INFO, "LOAD|RECOVERY SNOOZED ($iCellNumber) : $sMessage");
+			return;
+		}
+		elsif ($g_iRecoverySnoozeTime && ($g_iRecoverySnoozeTime <= $iNow)) {
+			syslog(LOG_INFO, "RecoverySnoozeTime expired ($g_iRecoverySnoozeTime)");
+			$g_iRecoverySnoozeTime = 0;
+		}
+
+		# FILTER:  All Nagios
+		if ($g_iNagiosSnoozeTime && ($g_iNagiosSnoozeTime > $iNow)) {
+			syslog(LOG_INFO, "NAGIOS SNOOZED ($iCellNumber): $sMessage");
+			return;
+		}
+		elsif ($g_iNagiosSnoozeTime) {
+			syslog(LOG_INFO, "NagiosSnoozeTime expired ($g_iNagiosSnoozeTime)");
+		}
+		$g_iNagiosSnoozeTime = 0;
+
+		# FILTER:  Regex
+		if ($g_sRegexBlock && ($g_iRegexBlockExpire > $iNow)) {
+
+			if ($sCompressedMessage =~ /($g_sRegexBlock)|(\[Broadcast mode)|(\[Audience is now)/i) {
+				syslog(LOG_INFO, "PAGE BLOCKED via /$g_sRegexBlock/ ($iCellNumber): $sMessage");
+				return;
+			}
+		}	
+		elsif ($g_sRegexBlock) {
+			syslog(LOG_INFO, "Regex Block expired (/$g_sRegexBlock/)");
+			$g_sRegexBlock = '';
+			$g_iRegexBlockExpire = 0;
+		}
+
+		# FILTER:  Rate Throttling
 		if ((defined $g_hThrottleInfo{$iCellNumber}) && ($g_hThrottleInfo{$iCellNumber} =~ /(\d+)\/(\d+)/)) {
 			my $iCount = $1;
 			my $iLastTime = $2;
@@ -1190,8 +1909,18 @@ sub send_sms_page($$) {
 		}
 	}
 
+	if (length($sMessage) < 158) {
+		$sMessage .= ' [' . random_string('s') . ']'; 
+	}
+	elsif (length($sMessage) < 160) {
+		$sMessage .= random_string('s');
+	}
+	else {
+		substr($sMessage, 159, 1) = random_string('s');
+	}
+
 	if (TEST_RUN) {
-		syslog(LOG_INFO, "FAKE PAGE ($iCellNumber): $sMessage");
+		syslog(LOG_INFO, "FAKE PAGE [$sSpeaker] ($iCellNumber): $sMessage");
 		return;
 	}
 
@@ -1200,17 +1929,16 @@ sub send_sms_page($$) {
 	$tBrowser->timeout(10);
 	my $tResponse = $tBrowser->post('http://app.signalhq.com/messages/send_individual_message',
 		[
-			'a' => '171',
-			'c' => '3863',
+			'a' => $CFGsSignalA,
+			'c' => $CFGsSignalCampaign,
 			'm' => $sMessage,
 			'mdn' => $iCellNumber,
 		]);
-	syslog(LOG_INFO, "PAGE [" . $tResponse->is_success . "] ($iCellNumber): $sMessage");
+	syslog(LOG_INFO, "PAGE [$sSpeaker:" . $tResponse->is_success . "] ($iCellNumber): $sMessage");
 	++$g_iMetricCount;
 
 	unless ($tResponse->is_success) {
-		if (open(MAIL, '| /usr/sbin/sendmail 6172939795@txt.att.net')) {
-#		if (open(MAIL, '| /usr/sbin/sendmail 6178522182@txt.att.net')) {
+		if (open(MAIL, "| /usr/sbin/sendmail $CFGsFallbackEmail")) {
 			print MAIL "pagingd can't send via signalhq.com!";
 			close(MAIL);
 		}
@@ -1237,8 +1965,26 @@ sub process_notifies($;$) {
 		delete $g_hPendingNotifies{$sPerson};
 		next if ($sPerson eq 'nagios');
 
-		send_sms_page(get_number_from_name($sPerson), "[Audience is now $sAudience]" . ((defined $sExtraMessage) ? " $sExtraMessage" : ''))
-			unless ($bSilentMode && (defined $g_hSilentRecovery{$sPerson}));
+		my $sBroadcast = defined ($g_hBroadcastRoomOwner{$g_hPeoplesRooms{$sSpeaker}}) ? "[Broadcast mode: replies only go to " . $g_hBroadcastRoomOwner{$g_hPeoplesRooms{$sSpeaker}} . "]\n" : '';
+
+		unless ($bSilentMode && (defined $g_hSilentRecovery{$sPerson})) {
+
+			# send the audience update
+			send_sms_page(get_number_from_name($sPerson), "${sBroadcast}[Audience is now $sAudience]" . ((defined $sExtraMessage) ? " $sExtraMessage" : ''), $sSpeaker);
+
+			# look for auto replies we have to send out
+			foreach my $sAutoReplyPerson (keys %g_hAutoReply) {
+
+				if ($g_hAutoReply{$sAutoReplyPerson}{expire} > time()) {
+					send_sms_page(get_number_from_name($sPerson), "[Auto] $sAutoReplyPerson: " . $g_hAutoReply{$sAutoReplyPerson}{reply}, $sSpeaker)
+						unless ($sBroadcast && ($sPerson ne $g_hBroadcastRoomOwner{$g_hPeoplesRooms{$sSpeaker}}));
+				}
+				else {
+					delete($g_hAutoReply{$sAutoReplyPerson});
+					syslog(LOG_INFO, "Auto reply for $sAutoReplyPerson expired.");
+				}
+			}
+		}
 	}
 }
 
@@ -1257,7 +2003,12 @@ sub process_pages($$) {
 			next if (($sPerson eq 'nagios') || ($sPerson eq 'emergency'));
 
 			if ($g_hPeoplesRooms{$sPerson} == $iRoom) {
-				next if ($sPerson eq $sSpeaker);
+				next if ($sPerson eq $sSpeaker);							# it's my own message
+
+				next if (defined($g_hBroadcastRoomOwner{$iRoom})  			# it's a broadcast only room
+						&& ($g_hBroadcastRoomOwner{$iRoom} ne $sPerson) 	# this outgoing copy isn't destined to the broadcast owner
+						&& ($g_hBroadcastRoomOwner{$iRoom} ne $sSpeaker));	# it isn't the broadcast owner speaking
+
 				++$iRecips;
 
 				if (($sMessage =~ /^RECOVERY/) && (defined $g_hSilentRecovery{$sPerson})) {
@@ -1266,7 +2017,7 @@ sub process_pages($$) {
 					syslog(LOG_DEBUG, "process_page($sSpeaker,x): Silenced RECOVERY for $sPerson (remaining " . $g_hSilentRecovery{$sPerson} . ")");
 				}
 				else {
-					send_sms_page(get_number_from_name($sPerson), $sMessage)
+					send_sms_page(get_number_from_name($sPerson), $sMessage, $sSpeaker)
 				}
 			}
 		}
@@ -1286,7 +2037,7 @@ sub process_pages($$) {
 
 				my $sSpeakersGroup = get_members_group($sSpeaker);
 				if (defined $hStaff{$sSpeakersGroup}{escalation}{cancel_msg}) {
-    				send_sms_page(get_number_from_name($sSpeaker), $hStaff{$sSpeakersGroup}{escalation}{cancel_msg});
+    				send_sms_page(get_number_from_name($sSpeaker), $hStaff{$sSpeakersGroup}{escalation}{cancel_msg}, $sSpeaker);
 				}
 
     			$bHandled = 1;
@@ -1302,7 +2053,7 @@ sub process_pages($$) {
 			}
 			else {
 				send_sms_page(get_number_from_name($sSpeaker), 
-					"[There's no one in this conversation other than you.  Name a person or group to include someone else.]");
+					"[There's no one in this conversation other than you.  Name a person or group to include someone else.] ", $sSpeaker);
 			}
 	}
 }
@@ -1342,6 +2093,7 @@ sub daemon_main() {
 
 		# sleep at most 30 seconds waiting for a socket connection
 		my ($tReadSet) = IO::Select->select($tReadHandles, undef, undef, 30);
+
 		expire_rooms();
 		daily_housekeeping();
 
@@ -1359,7 +2111,6 @@ sub daemon_main() {
 					$sSenderCallerId = $1;
 
 					$sSpeaker = get_name_from_number($sSenderCallerId);
-					syslog(LOG_DEBUG, "speaker = $sSpeaker");
 					next;
 				}
 
@@ -1367,15 +2118,43 @@ sub daemon_main() {
 			}
 
 			if ($sSpeaker =~ /^\d/) {
-				syslog(LOG_INFO, "Page from unknown user ($sSpeaker);  dropping");
+				syslog(LOG_INFO, "Page from unknown user ($sSpeaker);  dropping [$sMessage]");
+			}
+			elsif ($sSpeaker =~ /^maint:(.+)/i) {
+				my $sMaintWorkers = $1;
+				$sSpeaker = 'nagios';
+
+				if ($g_iMaintenanceRoomNumber > -1) {
+					combine_rooms($g_iMaintenanceRoomNumber, 'nagios') 
+				}
+				else {
+        			$g_iMaintenanceRoomNumber = $g_hPeoplesRooms{'nagios'} = get_a_room();
+        			$g_hRoomExpirations{$g_iMaintenanceRoomNumber} = time() + 5400;
+				}
+				process_mentions($g_iMaintenanceRoomNumber, $sMaintWorkers);
+
+				$g_iMaintenanceRoomNumber = $g_hPeoplesRooms{$sSpeaker};
+				$g_hRoomExpirations{$g_iMaintenanceRoomNumber} = time() + 5400;
+
+				foreach (keys %g_hPeoplesRooms) {
+					if ($g_hPeoplesRooms{$_} == $g_iMaintenanceRoomNumber) {
+						next if ($_ eq 'nagios');
+
+						send_sms_page(get_number_from_name($_), "[Cron has designated this a maintenance window room]", 'cron');
+					}
+				}
+				process_notifies($g_iMaintenanceRoomNumber);
 			}
 			else {
+				syslog(LOG_INFO, "MSG [$sSpeaker]: \"$sMessage\"");
 				my $sCompressedMessage = $sMessage;
 				$sCompressedMessage =~ s/\n//g;
-				unless (handle_paging_commands($sSpeaker, $sCompressedMessage)) {
+
+				# $sSpeaker == 'emergency' is here to avoid the call to handle_paging_commands() on emergency pages;
+				# otherwise those emergency pages might get flagged with an ambiguous name & get dropped
+				if (($sSpeaker eq 'emergency') || !handle_paging_commands($sSpeaker, $sCompressedMessage)) {
 					my $sSilenceStatus = silence_status();
 					my $sVacationStatus = vacation_status();
-					syslog(LOG_DEBUG, "MSG: $sMessage");
 					syslog(LOG_DEBUG, "CSG: $sCompressedMessage") if (DEBUG_LEVEL);
 					syslog(LOG_DEBUG, "PRE: " . room_status(-1)) if (DEBUG_LEVEL > 1);
 					syslog(LOG_DEBUG, "Silenced RECOVERY set: $sSilenceStatus") if ($sSilenceStatus);
@@ -1385,14 +2164,18 @@ sub daemon_main() {
 					# (also puts the speaker in a room if they don't already have one)
 					if ($sSpeaker ne 'emergency') {
 
-						# leading colon means we take the message literally;  don't look for name references
-						if ($sMessage =~ /^:/) {
-							$sMessage =~ s/^://;
+						# leading bang means we take the message literally;  don't look for name references
+						if ($sMessage =~ /^\!/) {
+							$sMessage =~ s/^\!//;
 						}
 						else {
-							process_mentions($sSpeaker, $sMessage);
-							$sMessage = strip_hidden_aliases($sMessage);
+							if (($g_iMaintenanceRoomNumber == -1) || ($sCompressedMessage !~ /^(PROBLEM|RECOVERY)/)) {
+								process_mentions($sSpeaker, $sCompressedMessage);
+								$sMessage = strip_hidden_aliases($sMessage, $sCompressedMessage);
+							}
 						}
+
+						$sMessage =~ s/^\^//;
 					}
 					else {
 						# emergency page - put the On Call person in a room and set a timer for their reply
@@ -1404,8 +2187,8 @@ sub daemon_main() {
 						else {
 							$g_hPeoplesRooms{$sOnCallPerson} = $iEmergencyRoom = get_a_room();
 						}
-						my $iEscTime = defined($hStaff{$CFGsEmergencyGroup}{escalation}{timer}) ? $hStaff{$CFGsEmergencyGroup}{escalation}{timer} : 60;
-						$g_hTimerForRoom{$iEmergencyRoom} = time() + $iEscTime - 1;
+						my $iEscTime = defined($hStaff{$CFGsEmergencyGroup}{escalation}{timer}) ? $hStaff{$CFGsEmergencyGroup}{escalation}{timer} : 120;
+						$g_hTimerForRoom{$iEmergencyRoom} = time() + $iEscTime - 61;
 
 						my @aHistory = ($sMessage);
 						$g_hRoomHistory{$iEmergencyRoom} = \@aHistory;
@@ -1455,10 +2238,10 @@ sub daemon_main() {
 												if (defined $hStaff{$sStaffGroup}{escalation} && defined $hStaff{$sStaffGroup}{escalation}{tag}) {
 													my $sTag = $hStaff{$sStaffGroup}{escalation}{tag};
 
-													if ($sMessage =~ /$sTag/i) {
+													if ($sMessage =~ /$sAt$sTag\b/i) {
 														$bSkipNotifies = 1;
 														$sMessage = '+' . $sMessage;
-														$g_hTimerForRoom{$g_hPeoplesRooms{'nagios'}} = time() + $hStaff{$sStaffGroup}{escalation}{timer} - 1;
+														$g_hTimerForRoom{$g_hPeoplesRooms{'nagios'}} = time() + $hStaff{$sStaffGroup}{escalation}{timer} - 61;
 														syslog(LOG_INFO, 'Setting escalation timer on room ' . $g_hPeoplesRooms{'nagios'} . ' to ' . $g_hTimerForRoom{$g_hPeoplesRooms{'nagios'}});
 													}
 												}
@@ -1503,7 +2286,7 @@ sub daemon_main() {
 
 							syslog(LOG_DEBUG, "Ticket for room " . $g_hPeoplesRooms{$sSpeaker} . ": " . $g_hTicketForRoom{$g_hPeoplesRooms{$sSpeaker}}) if (defined $g_hTicketForRoom{$g_hPeoplesRooms{$sSpeaker}});
 							rt_command("comment -m - " . $g_hTicketForRoom{$g_hPeoplesRooms{$sSpeaker}}, $sMessage)
-								if ((defined $g_hTicketForRoom{$g_hPeoplesRooms{$sSpeaker}}) && ($sOrigMessage !~ /^~/));
+								if ((defined $g_hTicketForRoom{$g_hPeoplesRooms{$sSpeaker}}) && ($sOrigMessage !~ /^\!/));
 
 							syslog(LOG_DEBUG, "POST: " . room_status(-1)) if (DEBUG_LEVEL > 1);
 							syslog(LOG_INFO, "Notify: " . join(', ', sort keys(%g_hPendingNotifies)));
@@ -1517,6 +2300,11 @@ sub daemon_main() {
 							}
 
 							process_pages($sSpeaker, $sMessage);
+
+							if ($g_iInitBroadcastOwner) {
+								$g_hBroadcastRoomOwner{$g_hPeoplesRooms{$sSpeaker}} = $g_iInitBroadcastOwner;
+								syslog(LOG_INFO, "Setting broadcast owner for room " . $g_hPeoplesRooms{$sSpeaker} . " = " . $g_iInitBroadcastOwner);
+							}
 
 							if (!$bSkipNotifies) {
 								if ($sMessage =~ /^RECOVERY/) {
@@ -1542,12 +2330,13 @@ sub daemon_main() {
 						}
 						else {
 							send_sms_page(get_number_from_name($sSpeaker),
-                    			"[There's no one in this conversation other than you.  Name a person or group to include someone else.]");
+                    			"[There's no one in this conversation other than you.  Name a person or group to include someone else.]", $sSpeaker);
 						}
 					}
 				}
 			}
 			close($tSocket);
+			$g_iInitBroadcastOwner = 0;
 		}
 
 		# the daemon hits this loop at least every 30 seconds - sooner if there's a socket connection
@@ -1555,6 +2344,19 @@ sub daemon_main() {
 		# this is one area where we don't have a $sSpeaker
 		foreach my $iEscalationRoomNumber (keys %g_hTimerForRoom) {
 			next unless ($g_hTimerForRoom{$iEscalationRoomNumber} < time());
+
+			# if it's the initial timer that expired - let's resend the initial page & wait 1 more minute before escalating
+			unless ($g_hTimerForRoom{$iEscalationRoomNumber} =~ /\./) {
+				syslog(LOG_INFO, "Early escalation timer is up; resending one last time pre-escalation (room $iEscalationRoomNumber)");
+
+				if (defined $g_hRoomHistory{$iEscalationRoomNumber}) {
+                	my @aHistory = @{$g_hRoomHistory{$iEscalationRoomNumber}};
+                	my $sLastPage = $aHistory[$#aHistory];
+                	process_pages($iEscalationRoomNumber, $sLastPage);
+				}
+				$g_hTimerForRoom{$iEscalationRoomNumber} = time() + 59.1;
+				next;
+			}
 
 			syslog(LOG_INFO, "Escalation timer expired for room $iEscalationRoomNumber - ESCALATING");
 
@@ -1580,7 +2382,9 @@ sub daemon_main() {
 			# then send everything out
 			if (defined $g_hRoomHistory{$iEscalationRoomNumber}) {
 				my @aHistory = @{$g_hRoomHistory{$iEscalationRoomNumber}};
-				process_pages($iEscalationRoomNumber, $aHistory[$#aHistory]);
+				my $sLastPage = $aHistory[$#aHistory];
+				$sLastPage =~ s/^\+/\!/;
+				process_pages($iEscalationRoomNumber, $sLastPage);
 			}
 			else {
 				process_pages($iEscalationRoomNumber, "[An emergency page has been escalated to you but the original text is missing.  Check your email.]");
@@ -1610,7 +2414,7 @@ sub parse_email_from_stdin() {
 		if (/^Subject: sms_reply:(\d+)/) {
 			$sClientCallerId = $1;
 		}
-		elsif (/$CFGsEmergencyEmailTrigger/i) {
+		elsif (/^Subject: NPR - ER ISSUES/) {
 			$bEmergencyEmail = 1;
 		}
 
@@ -1653,9 +2457,14 @@ sub parse_email_from_stdin() {
 	@g_aSTDIN = @aNewMsg;
 
 	if ($bEmergencyEmail) {
-		# foreach (@g_aSTDIN) {
-		#	s/^\s*(\w|\s)+:\s*(.+)/$2/;	# drop the field names
-		# }
+		my $bFoundEmail = 0;
+
+		foreach (@g_aSTDIN) {
+			last if ($bFoundEmail && /YES/);      # bomb out once we've found the contact email if it's a streaming call (i.e. YES)
+
+			s/^\s*(\w|\s)+:\s*(.+)/$2/;	          # drop the field names
+			$bFoundEmail = 1 if (/\S\@\S+\.\S/);
+		}
 
 		$sClientCallerId = 'emergency';
 	}
@@ -1681,14 +2490,17 @@ if (-t STDIN) {  # no stdin
 	#print "is expected to include the sender's Caller ID in a particular format, and the body will\n";
 	#print "be scanned for name mentions to determine the recipients.\n";
 	#exit;
-	$g_bBootOnly = 1;
+
+	unless (defined $ARGV[0] && ($ARGV[0] =~ /maint:/i)) {
+		$g_bBootOnly = 1;
+	}
 }
 else {
 	@g_aSTDIN = <STDIN>;
 }
 
 if (defined $ARGV[0]) {
-	if ($ARGV[0] !~ /nagios|emergency|hup|oncall/) {
+	if ($ARGV[0] !~ /nagios|emergency|hup|oncall|maint/) {
 		print "The only supported commandline parameter is for nagios to send pages.\n";
 		print "When nagios is sending we take STDIN as literal pager text.\n";
 		print "Otherwise we assume STDIN is an email to be parsed.\n";
@@ -1704,7 +2516,7 @@ $g_bBootOnly = 1 if (defined $ARGV[0] && $ARGV[0] eq 'hup');
 
 if ($sClientCallerId eq 'oncall') {
 	if (defined $ARGV[1]) {
-		print get_oncall_name($ARGV[1], defined $ARGV[2] ? $ARGV[2] : 0) . "\n";
+		print get_oncall_schedule($ARGV[1]) . "\n";
 		exit;
 	}
 	print "'oncall' requires a group name\n";
@@ -1714,13 +2526,16 @@ if ($sClientCallerId eq 'oncall') {
 # is the daemon alive?
 my $bDaemonLives = is_daemon_alive();
 
+
 # if not, spin it up
 unless ($bDaemonLives) {
 	daemon_startup();  # this returns in the parent/client after forking off the child/daemon
 	sleep(1);
 }
 
+
 unless ($g_bBootOnly) {
+
 	# here we're in the client and have something to send to the daemon
 	my $tSocket = IO::Socket::UNIX->new(
 		Type => SOCK_STREAM,
@@ -1730,7 +2545,6 @@ unless ($g_bBootOnly) {
 	print $tSocket "FF:" . $sClientCallerId . ":FF\n";
 	foreach (@g_aSTDIN) {
 		print $tSocket $_;
-		#syslog(LOG_DEBUG, "  socket_send(): $_");
 	}
 	close($tSocket);
 }
