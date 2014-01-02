@@ -12,6 +12,9 @@ our @EXPORT = ('%g_hUsers', '%g_hAmbigNames');
 
 our %g_hUsers;
 our %g_hAmbigNames;
+my %hDedupeByMessage;
+my $iLastDedupeMaintTime;
+
 
 sub createUser {
 	my $rhUser = {
@@ -33,6 +36,26 @@ sub createUser {
     debugLog(D_users, "created $_[0] ($_[2]) of $_[3]");
 
     return $rhUser;
+}
+
+
+sub previouslySentTo($$) {
+    my $iSender = shift;
+    my $sMessage = shift;
+    my $iNow = time();
+
+    if (defined $hDedupeByMessage{$sMessage}) {
+        if ($hDedupeByMessage{$sMessage} =~ /\b$iSender:(\d+)\b/) {
+            my $iTime = $1;
+            return 1 if ($iTime > $iNow - 172800);
+
+            $hDedupeByMessage{$sMessage} =~ s/$iSender:$iTime/$iSender:$iNow/;
+            return 0;
+        }
+    }
+
+    $hDedupeByMessage{$sMessage} = ($hDedupeByMessage{$sMessage} ? $hDedupeByMessage{$sMessage} : '') . " $iSender:" . $iNow;
+    return 0;
 }
 
 
@@ -171,6 +194,24 @@ sub usersHealthCheck() {
             $g_hUsers{$iUser}->{vacation_end} = 0;
             infoLog($g_hUsers{$iUser}->{name} . "'s vacation time has expired");
             main::sendEmail(main::getAdminEmail(), '', sv(E_VacationElapsed1, $g_hUsers{$iUser}->{name}));
+        }
+    }
+
+    if ($iLastDedupeMaintTime < $iNow - 3600) {
+        $iLastDedupeMaintTime = $iNow;
+        debugLog(D_users, "cleaning up deduping hash");
+
+        foreach my $sMessage (keys %hDedupeByMessage) {
+            my $sData = $hDedupeByMessage{$sMessage};
+
+            foreach my $iPhone (split(/\s+/, $sData)) {
+                if ($sData =~ /\b$iPhone:(\d+)\b/) {
+                    my $iTime = $1;
+                    $sData =~ s/$iPhone:$iTime// if ($iTime < $iNow - 172800);
+                }
+            }
+
+            delete $hDedupeByMessage{$sMessage} if ($sData =~ /^\s*$/);
         }
     }
 }

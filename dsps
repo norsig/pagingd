@@ -40,8 +40,6 @@ use Getopt::Long;
 use CGI qw();
 use Net::SMTP;
 use LWP 5.64;
-use strict;
-
 use lib "/usr/local/bin/dsps3";
 use DSPS_User;
 use DSPS_Room;
@@ -54,6 +52,7 @@ use DSPS_CmdPermission;
 use DSPS_SystemFilter;
 use DSPS_Util;
 use DSPS_Test;
+use strict;
 
 #-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Debugging is available on a per topic basis.  To include syslog debug detail simply
@@ -336,15 +335,17 @@ sub sendSmsPage($$) {
 
     # append a random character to make the message unique
     # (sms gateway companies often filter out dupes)
-    if (length($sMessage) < 158) {
-        $sMessage .= ' [' . random_string('s') . ']';
-    }
-    elsif (length($sMessage) < 160) {
-        $sMessage .= random_string('s');
-    }
-    else {
-        $sMessage = substr($sMessage, 0, 159);
-        substr($sMessage, 159, 1) = random_string('s');
+    if (DSPS_User::previouslySentTo($iCellNumber, $sMessage)) {
+        if (length($sMessage) < 158) {
+            $sMessage .= ' [' . random_string('s') . ']';
+        }
+        elsif (length($sMessage) < 160) {
+            $sMessage .= random_string('s');
+        }
+        else {
+            $sMessage = substr($sMessage, 0, 159);
+            substr($sMessage, 159, 1) = random_string('s');
+        }
     }
 
     unless (DSPS_User::humanUsersPhone($iCellNumber)) {
@@ -945,11 +946,7 @@ sub processMentions($$$;$) {
 
         if ($sScanMessage =~ /$sAt($sEscName)\b/i) {
             debugLog(D_pageEngine, "found mention of escalation $sEscName");
-
-            # if it's not a recovery, prime the escalation
-            unless ($sScanMessage =~ $g_hConfigOptions{recovery_regex}) {
-                $bRoomChanged = (DSPS_Escalation::primeEscalation($sSender, $sEscName, $sRealMessage) > 0) || $bRoomChanged;
-            }
+            $bRoomChanged = (DSPS_Escalation::primeEscalation($sSender, $sEscName, $sRealMessage) > 0) || $bRoomChanged;
         }
     }
 
