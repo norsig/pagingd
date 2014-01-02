@@ -40,6 +40,8 @@ use Getopt::Long;
 use CGI qw();
 use Net::SMTP;
 use LWP 5.64;
+use strict;
+
 use lib "/usr/local/bin/dsps3";
 use DSPS_User;
 use DSPS_Room;
@@ -52,7 +54,6 @@ use DSPS_CmdPermission;
 use DSPS_SystemFilter;
 use DSPS_Util;
 use DSPS_Test;
-use strict;
 
 #-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Debugging is available on a per topic basis.  To include syslog debug detail simply
