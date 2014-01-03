@@ -354,7 +354,16 @@ sub readConfig(;$) {
 
         # command permission line
         if (/\b(?:cmd|command)\s*:\s*([?:]\w+)\D+(\d+)/i) {
-            $DSPS_CmdPermission::hCmdPermission{$1} = $2;
+            my $sCmd = $1;
+            my $iValue = $2;
+
+            if (defined $DSPS_CmdPermission::hDefaultCmdPermission{$sCmd}) {
+                $DSPS_CmdPermission::hCmdPermission{$1} = $2;
+            }
+            else {
+                print infoLog("configuration error - '$sCmd' isn't a valid command $sLineNum");
+                ++$iErrors;
+            }
             next;
         }
 

@@ -11,7 +11,7 @@ our @EXPORT = ();
 
 
 our %hCmdPermission;
-my %hDefaultCmdPermission = (   '??'            => 10,
+our %hDefaultCmdPermission = (  '??'            => 10,
                                 '?groups'       => 10,
                                 '?rooms'        => 20,
                                 '?oncall'       => 20,
