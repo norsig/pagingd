@@ -105,6 +105,17 @@ ambiguous: dave|david; DavidF, DavidC, Cooper or Franz
 
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Command Permissions
+# Here you can specify what access level a user requires in order
+# to use a particular command.  Any command you don't define an
+# access level for will have a default level that's set at the
+# top of DSPS_CmdPermission.pm.
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+command: ?groups 10
+command: :swap 35
+
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # System configuration
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 
