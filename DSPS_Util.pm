@@ -11,7 +11,7 @@ use constant ONEWEEK => 604800;
 
 sub isDuringWakingHours() {
     my ($iMinute, $iHour) = (localtime(time()))[1..2];
-    return ($iHour > 7 && $iHour < 22);
+    return ($iHour > 6 && $iHour < 22);
 }
 
 
