@@ -57,7 +57,7 @@ sub configSyntaxValid() {
         }
 
         unless ($g_hUsers{$iPhone}->{name} =~ /$g_hUsers{$iPhone}->{regex}/i) {
-            print STDERR infoLog('user ' . $g_hUsers{$iPhone}->{name} . "'s \"name\" doesn't match their \"regex\"; they don't have to be equal but they have to match");
+            print STDERR infoLog('user ' . $g_hUsers{$iPhone}->{name} . "'s \"name\" isn't contained in their \"regex\"; this is an internal DSPS requirement");
             $bValid = 0;
         }
     }
@@ -93,7 +93,11 @@ sub configSyntaxValid() {
 
 sub readConfig(;$) {
     my $sConfigFileName = shift || "$sConfigPath/config.dsps";
-    open(CFG, $sConfigFileName) || return 0;
+
+    unless (open(CFG, $sConfigFileName)) {
+        print infoLog("Unable to read $sConfigFileName");
+        return 0;
+    }
 
     my $sSection = '';
     my $sInfo = '';

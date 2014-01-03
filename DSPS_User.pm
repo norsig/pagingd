@@ -90,14 +90,26 @@ sub freezeState() {
         $hUserState{$iUser}->{macros} = $g_hUsers{$iUser}->{macros};
     }
 
-   return freeze(%hUserState);
+   return freeze(%hUserState); 
+}
+
+
+sub freezeMessageState() {
+    return freeze(%hDedupeByMessage);
+}
+
+
+sub thawMessageState($) { 
+    %hDedupeByMessage = thaw(shift);
 }
 
 
 sub thawState($) {
     my %hUserState;
 
-    eval { %hUserState = thaw(shift); };
+    eval { 
+        %hUserState = thaw(shift); 
+    };
     return infoLog("Unable to parse user state data - ignoring") if ($@);
 
     foreach my $iUser (keys %hUserState) {
@@ -199,7 +211,7 @@ sub usersHealthCheck() {
 
     if ($iLastDedupeMaintTime < $iNow - 3600) {
         $iLastDedupeMaintTime = $iNow;
-        debugLog(D_users, "cleaning up deduping hash");
+        debugLog(D_users | D_pageEngine, "cleaning up deduping hash");
 
         foreach my $sMessage (keys %hDedupeByMessage) {
             my $sData = $hDedupeByMessage{$sMessage};
