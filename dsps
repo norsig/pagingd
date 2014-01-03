@@ -336,6 +336,9 @@ sub getRTLink() { return $g_hConfigOptions{rt_link}; }
 sub sendSmsPage($$) {
     my ($iCellNumber, $sMessage) = @_;
 
+    # trim to 160 characters
+    $sMessage = substr($sMessage, 0, 160) if length($sMessage) > 160;
+
     # append a random character to make the message unique
     # (sms gateway companies often filter out dupes)
     if (DSPS_User::previouslySentTo($iCellNumber, $sMessage)) {
@@ -346,7 +349,6 @@ sub sendSmsPage($$) {
             $sMessage .= random_string('s');
         }
         else {
-            $sMessage = substr($sMessage, 0, 159);
             substr($sMessage, 159, 1) = random_string('s');
         }
     }
