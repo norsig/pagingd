@@ -18,25 +18,26 @@ use constant D_state                      => 0x00000200;
 use constant D_rt                         => 0x00000400;
 use constant D_email                      => 0x00000800;
 
-use constant D_                           => 0x00001000;
-use constant D_interface                  => 0x00002000;
-use constant D_lists                      => 0x00004000;
-use constant D_load                       => 0x00008000;
-use constant D_lookup                     => 0x00010000;
-use constant D_memory                     => 0x00020000;
-use constant D_pid                        => 0x00040000;
-use constant D_process_info               => 0x00080000;
-use constant D_queue_run                  => 0x00100000;
-use constant D_receive                    => 0x00200000;
-use constant D_resolver                   => 0x00400000;
-use constant D_retry                      => 0x00800000;
-use constant D_rewrite                    => 0x01000000;
-use constant D_route                      => 0x02000000;
-use constant D_timestamp                  => 0x04000000;
-use constant D_tls                        => 0x08000000;
-use constant D_transport                  => 0x10000000;
-use constant D_uid                        => 0x20000000;
-use constant D_verify                     => 0x40000000;
+#use constant D                         => 0x00001000;
+#use constant D                         => 0x00002000;
+#use constant D                         => 0x00004000;
+#use constant D                         => 0x00008000;
+#use constant D                         => 0x00010000;
+#use constant D                         => 0x00020000;
+#use constant D                         => 0x00040000;
+#use constant D                         => 0x00080000;
+#use constant D                         => 0x00100000;
+#use constant D                         => 0x00200000;
+#use constant D                         => 0x00400000;
+#use constant D                         => 0x00800000;
+#use constant D                         => 0x01000000;
+#use constant D                         => 0x02000000;
+#use constant D                         => 0x04000000;
+#use constant D                         => 0x08000000;
+#use constant D                         => 0x10000000;
+#use constant D                         => 0x20000000;
+#use constant D                         => 0x40000000;
+
 use constant D_all						  => 0xffffffff;
 
 
