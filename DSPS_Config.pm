@@ -252,6 +252,20 @@ sub readConfig(;$) {
             next;
         }
 
+        # minimum people to abort
+        if (/\b(?:min_to_abort|min_people_to_abort|minimum_people_to_abort)\s*:\s*(\d+)/i) {
+            my $iValue = $1;
+
+            if ($sSection eq 'escalation') {
+                $rStruct->{min_to_abort} = $iValue;
+            }
+            else {
+                print infoLog("configuration error - min_to_abort outside of escalation $sLineNum");
+                ++$iErrors;
+            }
+            next;
+        }
+
         # alert email
         if (/\b(?:ae|alert_email)\s*:\s*(.+)/i) {
             my $sValue = $1;
