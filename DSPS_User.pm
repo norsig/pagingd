@@ -209,7 +209,8 @@ sub usersHealthCheck() {
         }
     }
 
-    if ($iLastDedupeMaintTime < $iNow - 3600) {
+    # every 6 hours
+    if ($iLastDedupeMaintTime < $iNow - 21600) {
         $iLastDedupeMaintTime = $iNow;
         debugLog(D_users | D_pageEngine, "cleaning up deduping hash");
 
