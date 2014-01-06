@@ -171,7 +171,7 @@ sub sendEmail($$$) {
     my $sFrom = $g_hConfigOptions{smtp_from} ? $g_hConfigOptions{smtp_from} : 'noreply@dsps';
     my $sHeader = "From: $sFrom\n";
 
-    return infoLog("ERROR: cannot send mail with 'smtp_server' set in config file") unless $g_hConfigOptions{smtp_server};
+    return infoLog("ERROR:  cannot send mail without 'smtp_server' set in config file") unless $g_hConfigOptions{smtp_server};
     return infoLog("WARNING: cannot send mail without a recipient") unless ($sTo || $sCc);
 
     my $tSMTP = Net::SMTP->new($g_hConfigOptions{smtp_server});
@@ -186,7 +186,7 @@ sub sendEmail($$$) {
             debugLog(D_email, "$sFrom -> " . $g_hConfigOptions{admin_email} . " (due to TEST_RUN);  normally To [$sTo], Cc [$sCc]");
         }
         else {
-            infoLog("ERROR: cannot send mail in TEST_RUN mode without 'admin_email' set in config file");
+            infoLog("ERROR:  cannot send mail in TEST_RUN mode without 'admin_email' set in config file");
             $tSMTP->quit();
             return;
         }
@@ -254,7 +254,6 @@ sub rtCreateTicket($$$) {
 
     if (rtCommand("create -t ticket set queue=$sQueue subject=\\'$sSubject\\'") =~ /Ticket (\d+) created/) {
         $iTicketNumber = $1;
-        rtCommand("comment -m - $iTicketNumber", $sMessage);
         infoLog("RT: created ticket $iTicketNumber");
     }
 
@@ -954,15 +953,6 @@ sub processMentions($$$;$) {
     my $bRoomChanged        = 0;
     my $sAt                 = $g_hConfigOptions{require_at} ? '@' : '\b';
 
-    # look for escalation mentions
-    foreach my $sEscName (keys %g_hEscalations) {
-
-        if ($sScanMessage =~ /$sAt($sEscName)\b/i) {
-            debugLog(D_pageEngine, "found mention of escalation $sEscName");
-            $bRoomChanged = (DSPS_Escalation::primeEscalation($sSender, $sEscName, $sRealMessage) > 0) || $bRoomChanged;
-        }
-    }
-
     # look for alias mentions
     foreach my $sAlias (keys %g_hAliases) {
 
@@ -1003,6 +993,16 @@ sub processMentions($$$;$) {
         if ($sScanMessage =~ /$sAt($g_hUsers{$iUserPhone}->{regex})\b/i) {
             debugLog(D_pageEngine, "found mention of user " . $g_hUsers{$iUserPhone}->{name});
             $bRoomChanged = DSPS_Room::combinePeoplesRooms($g_hUsers{$sSender}, $g_hUsers{$iUserPhone}) || $bRoomChanged;
+        }
+    }
+
+    # look for escalation mentions
+    # do escalations last in case other names were also mentioned that will qualify the escalation's min_to_abort criteria
+    foreach my $sEscName (keys %g_hEscalations) {
+
+        if ($sScanMessage =~ /$sAt($sEscName)\b/i) {
+            debugLog(D_pageEngine, "found mention of escalation $sEscName");
+            $bRoomChanged = (DSPS_Escalation::primeEscalation($sSender, $sEscName, $sRealMessage) > 0) || $bRoomChanged;
         }
     }
 
@@ -1175,7 +1175,7 @@ sub processPageEngine($$) {
 
     # are there ambiguous names that we should warn the user about?
     # bypass if the message starts with a bang
-    unless ($bBypass) {
+    unless ($bBypass or !DSPS_User::humanUsersPhone($iSender)) {
         foreach my $sAmbig (keys %g_hAmbigNames) {
             if ($sMessage =~ /\b($sAmbig)\b/i) {
                 my $sFound = $1;
@@ -1207,10 +1207,10 @@ sub processPageEngine($$) {
             unless ($bBypass) {
                 if ($g_hUsers{$iSender}->{auto_include}) {
                     infoLog("auto_include is set for user " . $g_hUsers{$iSender}->{name} . "; only adding " . $g_hUsers{$iSender}->{auto_include});
-                    $bRoomChanged = processMentions($iSender, $g_hUsers{$iSender}->{auto_include}, $sMessage) || $bRoomChanged;
+                    $bRoomChanged = processMentions($iSender, $g_hUsers{$iSender}->{auto_include}, $sOrigMessage) || $bRoomChanged;
                 }
                 else {
-                    $bRoomChanged = processMentions($iSender, $sMessage, $sMessage) || $bRoomChanged;
+                    $bRoomChanged = processMentions($iSender, $sMessage, $sOrigMessage) || $bRoomChanged;
                 }
             }
         }
@@ -1300,9 +1300,22 @@ sub daemonMain() {
             # whether we woke up for a socket connection versus just timing out because 30 seconds have
             # elapsed.  if we enter the 'for', we got a socket.
             foreach my $tReadSocketHandle (@$rtReadSet) {
-                my $oConnection = $g_tListenerSocket->accept();
-                my $oRequest = $oConnection->get_request();
-                my $rVars = CGI->new($oRequest->decoded_content())->Vars;
+                my $oConnection;
+                my $oRequest;
+                my $rVars;
+
+                eval {
+                    alarm(8);
+                    local $SIG{ALRM} = sub { die "alarm\n"; };
+                    $oConnection = $g_tListenerSocket->accept();
+                    $oRequest = $oConnection->get_request();
+                    $rVars = CGI->new($oRequest->decoded_content())->Vars;
+                    alarm(0);
+                };
+                if ($@ eq "alarm\n" ) {
+                    infoLog("ERROR:  timeout reading request" . ($oConnection ? " from " . $oConnection->peerhost() . ':' . $oConnection->peerport() : ''));
+                    next;
+                }
 
                 infoLog($oRequest->uri->path . ' request from ' . $oConnection->peerhost() . ':' . $oConnection->peerport(). " specifying: " . join(', ', sort keys %{$rVars}));
 
@@ -1311,6 +1324,10 @@ sub daemonMain() {
                     if (defined($rVars->{message}) && defined($rVars->{sender})) {
 
                         if (defined($rVars->{fire_fast}) && ($rVars->{fire_fast} == 1)) {
+
+                            # in fire_fast mode we send the client the ack immediately and let them go on their way while we do the work
+                            # FWIW, most of what we do is prety fast anyway.  the real advantage is if we're creating an RT ticket on a
+                            # remote server that might make us slow to respond.
                             $oConnection->send_response(HTTP::Response->new(200, 'OK', HTTP::Headers->new(), "Message submitted\n"));
                             processPageEngine($rVars->{sender}, $rVars->{message});
                         }
