@@ -42,6 +42,9 @@ sub primeEscalation($$$) {
     DSPS_Room::combinePeoplesRooms($g_hUsers{$sSender}, $g_hUsers{$iOncallPhone});
     my $iRoom = DSPS_Room::findUsersRoom($iOncallPhone);
     
+    # never prime an escalation off of a recovery page
+    return 0 if (main::getRecoveryRegex() && $sMessage =~ main::getRecoveryRegex());
+
     # are there enough other people in the room to skip the escalation?
     my $iOccupants = () = DSPS_Room::roomStatus($iRoom, 1, 1);
     if ($iOccupants >= $g_hEscalations{$sEscName}->{min_to_abort}) {
@@ -59,15 +62,12 @@ sub primeEscalation($$$) {
         return 0;
     }
 
-    # did the on call person in the room respond within the last 10 minutes?  if so we're not going to prime another escalation
+    # did the on call person in the room respond within the last 20 minutes?  if so we're not going to prime another escalation
     # this is primiarly to catch flapping nagios issues where the on call person is constantly having to disarm escalations
-    if ($g_hRooms{$iRoom}->{last_human_reply_time} >= time() - 600) {
-        debugLog(D_escalations, $g_hUsers{$iOncallPhone}->{name} . " has responded within the last 10 minutes;  not rearming the escalation");
+    if ($g_hRooms{$iRoom}->{last_human_reply_time} >= time() - 1200) {
+        debugLog(D_escalations, $g_hUsers{$iOncallPhone}->{name} . " has responded within the last 20 minutes;  not rearming the escalation");
         return 0;
     }
-
-    # never prime an escalation off of a recovery page
-    return 0 if (main::getRecoveryRegex() && $sMessage =~ main::getRecoveryRegex());
 
     # it's a go - setup the escalation
     # the "minus 60 seconds" here is so we have time to resend the initial page to the on call person a second time (just to be nice) before
@@ -335,6 +335,23 @@ sub findUsersSchedules($) {
     }
 
     return @aScheds;
+}
+
+
+# a user can be part of multiple escalations, each with it's own emails.
+# collect them all
+sub getUsersEscalationsEmails($) {
+    my $iSender = shift;
+
+    # look up all of the user's oncall schedules (escalations they're part of)
+    my @aSenderEsc = findUsersSchedules($iSender);
+
+    my @aEmails;
+    foreach my $sEsc (@aSenderEsc) {
+        push(@aEmails, $g_hEscalations{$sEsc}->{swap_email}) if $g_hEscalations{$sEsc}->{swap_email};
+    }
+
+    return join(', ', @aEmails);
 }
 
 

@@ -2,6 +2,7 @@ package DSPS_SystemFilter;
 
 use FreezeThaw qw(freeze thaw);
 use DSPS_User;
+use DSPS_Room;
 use DSPS_Debug;
 use strict;
 use warnings;
@@ -39,8 +40,9 @@ sub thawState($) {
 
 
 
-sub blockedByFilter($) {
+sub blockedByFilter($$) {
     my $sMessage = shift; 
+    my $iRoom = shift;
     my $iNow = time();
 
     # check the recovery or system load filter
@@ -66,6 +68,19 @@ sub blockedByFilter($) {
         }
 
         rmRegexFilter($rFilterRegex{$iRegexFilterID}->{regex}) if ($rFilterRegex{$iRegexFilterID}->{till} < $iNow); 
+    }
+
+    # check for a previously seen message in a room with ack-mode enabled
+    if ($iRoom && $g_hRooms{$iRoom}->{ack_mode}) {
+        my $sGenericMessage = $sMessage;
+        $sGenericMessage =~ s/\bDate:\s.*$//s;
+
+        foreach my $sPrevMsg (@{$g_hRooms{$iRoom}->{history}}) {
+            if ($sPrevMsg =~ /$sGenericMessage/) {
+                infoLog("message matched previous in room's history (ack-mode)");
+                return 1;
+            }
+        }
     }
 
     # nothing matched

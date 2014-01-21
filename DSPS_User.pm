@@ -201,31 +201,55 @@ sub humanUsersPhone($) {
 sub usersHealthCheck() {
     my $iNow = time();
 
+    # check for expired vacation time
     foreach my $iUser (keys %g_hUsers) {
         if ($g_hUsers{$iUser}->{vacation_end} && ($g_hUsers{$iUser}->{vacation_end} <= $iNow)) {
             $g_hUsers{$iUser}->{vacation_end} = 0;
             infoLog($g_hUsers{$iUser}->{name} . "'s vacation time has expired");
-            main::sendEmail(main::getAdminEmail(), '', sv(E_VacationElapsed1, $g_hUsers{$iUser}->{name}));
+            main::sendEmail(main::getUsersEscalationsEmails($iUser), main::getAdminEmail(), sv(E_VacationElapsed1, $g_hUsers{$iUser}->{name}));
         }
     }
 
-    # every 6 hours
+    # check for expired message cache entries every 6 hours
+    # structure of this cache is a hash keyed on message content with
+    # each hash entry being a string of CELLNUMBER:LAST_SEND_TIME
+    # that way it's fast to find a given message and update who it went to.
+    # we use this to determine if that exact message has gone to a specific
+    # phone before.  if so (and it's been within the last 2 days) we can add
+    # a random char to the end of the message to make it unique (done in
+    # previouslySentTo().  otherwise the text gateway company drops what it
+    # thinks is a dupe message to the phone.
     if ($iLastDedupeMaintTime < $iNow - 21600) {
         $iLastDedupeMaintTime = $iNow;
-        debugLog(D_users | D_pageEngine, "cleaning up deduping hash");
 
+        my $iBeforeCount = keys %hDedupeByMessage;
         foreach my $sMessage (keys %hDedupeByMessage) {
             my $sData = $hDedupeByMessage{$sMessage};
 
-            foreach my $iPhone (split(/\s+/, $sData)) {
-                if ($sData =~ /\b$iPhone:(\d+)\b/) {
-                    my $iTime = $1;
+            foreach my $sDataPair (split(/\s+/, $sData)) {
+                next unless $sDataPair;
+
+                if ($sDataPair =~ /\b(\d+):(\d+)\b/) {
+                    my $iPhone = $1;
+                    my $iTime = $2;
                     $sData =~ s/$iPhone:$iTime// if ($iTime < $iNow - 172800);
+                }
+                else {
+                    $sData =~ s/$sDataPair//;
                 }
             }
 
-            delete $hDedupeByMessage{$sMessage} if ($sData =~ /^\s*$/);
+            if ($sData =~ /^\s*$/) {
+                delete $hDedupeByMessage{$sMessage} 
+            }
+            else {
+                $hDedupeByMessage{$sMessage} = $sData;
+            }
         }
+
+        my $iAfterCount = keys %hDedupeByMessage;
+        my $iDiff = $iBeforeCount - $iAfterCount;
+        debugLog(D_users | D_pageEngine, "cleaned up deduping hash ($iDiff entr" . ($iDiff == 1 ? 'y' : 'ies') . " removed, $iAfterCount remaining)");
     }
 }
 
@@ -270,7 +294,7 @@ sub blockedByFilter($$$) {
                 infoLog("PAGE THROTTLED ($iPhone): $sMessage");
                 return 1;
             }
-            elsif ($iCount == THROTTLE_PAGES - 1) {
+            elsif (($iCount == THROTTLE_PAGES - 1) && ($sMessage =~ /^Throttled::/)) {
                 $$rMessage = 'Throttled::' . $sMessage;
             }
         }

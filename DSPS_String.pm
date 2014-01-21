@@ -8,9 +8,9 @@ use base 'Exporter';
 our @EXPORT = ('t', 'sv', 'cr', 'S_NoPermission', 'S_NoConversations', 'S_AudienceUpdate', 'S_YoureAlone', 'S_NotInRoom', 'S_NowInMaint',
                 'S_UnknownCommand', 'S_NeedTime', 'S_RecoveryAlreadyF', 'S_RecoveryAlreadyU', 'S_RecoveryFiltered', 'S_RecoveryEnabled', 'S_NoReBroadcast',
                 'S_NothingToSwap', 'S_NoRecipSwap1', 'S_SwapSyntax', 'S_NoSwapMatches1', 'S_MultipleMatches3', 'S_UnsharedSchedule2', 'S_ScheduleSwap1',
-                'C_PIDPath', 'C_StatePath', 'S_AutoReplySyx', 'S_AutoReplySet1', 'S_AutoReplyRm', 'S_NoSuchEscalation1', 'S_NoEscalations', 'S_NoSuchEntity',
+                'C_PIDPath', 'C_StatePath', 'S_AutoReplySyx', 'S_AutoReplySet1', 'S_AutoReplyRm', 'S_NoSuchEscalation1', 'S_NoEscalations', 'S_NoSuchEntity', 'S_NoSuchHelp',
                 'S_SmartAlreadyF', 'S_SmartFiltered', 'E_SwapSuccess4', 'S_EmailSent1', 'S_NeedEmail', 'E_VacationSet2', 'E_VacationCancel1', 'E_VacationElapsed1',
-                'E_EscalationFire1', 'S_VacaNeedTime', 'S_NoVacations');
+                'E_EscalationFire1', 'S_VacaNeedTime', 'S_NoVacations', 'S_AmbiguousIgnored1', 'S_AmbiguousReject2', '@A_HelpTopics');
 
 use constant S_NoPermission     => "You don't have permission for this command.";
 use constant S_NoReBroadcast    => "This room is already in broadcast mode from another sender & you don't have permission to override.  Your message was sent only to the original broadcaster.";
@@ -18,7 +18,7 @@ use constant S_NoConversations  => 'There are currently no rooms or conversation
 use constant S_AudienceUpdate   => 'Audience is now';
 use constant S_YoureAlone       => "There's no one in this conversation other than you.  Mention a name or group to specify a recipient.";
 use constant S_NotInRoom        => "You're not currently in a conversation/room.";
-use constant S_NowInMaint       => 'designed this a maintenance window room.  Escalations will not fire for the duration of the room.';
+use constant S_NowInMaint       => 'designated this a maintenance window room.  Escalations will not fire for the duration of the room.';
 use constant S_UnknownCommand   => 'Unrecognized command.';
 use constant S_NeedTime         => "requires a time specification (e.g. 3h).  Units can be 'm'inutes, 'h'ours, 'd'ays, or 'w'eeks.";
 use constant S_RecoveryAlreadyF => "You already have recoveries filtered (blocked).  Use ':recovery' to re-enable them.";
@@ -44,6 +44,10 @@ use constant S_EmailSent1       => "The room's history has been emailed to %%.";
 use constant S_NeedEmail        => "You need to specify a recipient's email address.  e.g. ':email ADDRESS'";
 use constant S_VacaNeedTime     => "The vacation command needs a time specified.  e.g. ':vacation 3d'";
 use constant S_NoVacations      => "No one has currently configured vacation time.";
+use constant S_AmbiguousIgnored1=> "Ambiguous name reference '%%' ignored;  message was sent as is.";
+use constant S_AmbiguousReject2 => "%% is ambiguous.  Try %%.";
+use constant S_NoSuchHelp       => 'There are no help topics that match your search.';
+
 
 use constant E_SwapSuccess4     => "Subject: Oncall schedule change\n\n" .
                                    "%% has swapped weeks with %%.\n\n" .
@@ -62,6 +66,45 @@ use constant E_EscalationFire1  => "Subject: DSPS Escalation!\n\n".
 
 use constant C_PIDPath => '/tmp/.dsps.pid';
 use constant C_StatePath => '/tmp/.dsps.state';
+
+
+our @A_HelpTopics = (
+    ":vacation T (set)\n" .
+    "?vacation (query)",
+
+    ":macro NAME DEFINITION (set)\n" .
+    ":macro NAME (delete)\n" .
+    "?macros (query)\n" .
+    ":nomacros (delete all)",
+
+    ":nonagios (block)\n" .
+    ":nagios (unblock)\n" .
+    ":noregex T RE (block)\n" .
+    ":noregex 0 RE (unblock)\n" .
+    ":sleep (load&recv 3h)\n" .
+    ":nosleep\n" .
+    ":maint (no escs)\n" .
+    "?filters (query)",
+
+    ":norecovery (block)\n" .
+    ":smartrecovery (enable)\n" .
+    ":recover (unblock)\n" .
+    "?filters (query)",
+
+    ":swap PERSON (swap on call)",
+
+    ":autoreply T TEXT (set)\n" .
+    ":noautoreply (delete)",
+
+    ":email ADDRESS",
+
+    ":ack (enable room acknowledgement mode)",
+
+    "?oncall\n" .
+    "?rooms\n" .
+    "?groups\n" .
+    "?GROUP\n" 
+);
 
 
 # substitute in variables
@@ -98,3 +141,5 @@ sub cr($) {
     return ($sText ? "$sText\n" : $sText);
 }
 
+
+1;

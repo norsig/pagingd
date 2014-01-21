@@ -38,6 +38,7 @@ sub createRoom {
         broadcast_speaker => 0,
         history => [],
         maintenance => 0,
+        ack_mode => 0,
         last_problem_time => 0,
         last_human_reply_time => 0,
     };
@@ -78,7 +79,7 @@ sub combinePeoplesRooms($$) {
                 roomEnsureOccupant($iDestinationRoom, $iUserInSourceRoom);
             }
 
-            $g_hRooms{$iDestinationRoom}->{maintenance} = $g_hRooms{$iSourceRoom}->{maintenance};
+            $g_hRooms{$iDestinationRoom}->{maintenance} = $g_hRooms{$iDestinationRoom}->{maintenance} || $g_hRooms{$iSourceRoom}->{maintenance};
             $g_hRooms{$iDestinationRoom}->{broadcast_speaker} = $g_hRooms{$iSourceRoom}->{broadcast_speaker};
             $g_hRooms{$iDestinationRoom}->{ticket_number} = $g_hRooms{$iSourceRoom}->{ticket_number};
             $g_hRooms{$iDestinationRoom}->{escalation_orig_sender} = $g_hRooms{$iSourceRoom}->{escalation_orig_sender};
@@ -87,7 +88,7 @@ sub combinePeoplesRooms($$) {
         }
         else {
             # add the dragged user to the room
-            $g_hRooms{$iDestinationRoom}->{occupants_by_phone}{$rDraggedUser->{phone}} = 1;
+            roomEnsureOccupant($iDestinationRoom, $rDraggedUser->{phone});
             debugLog(D_rooms, 'user ' . $rDraggedUser->{name} . " (" . $rDraggedUser->{phone} . ") added to room $iDestinationRoom");
         }
 
@@ -131,6 +132,20 @@ sub findOrCreateUsersRoom($) {
     return $iRoom;
 }
 
+
+
+sub roomHumanCount($) {
+    my $iRoom = shift;
+    my $iOccupants = 0;
+
+    if (defined $g_hRooms{$iRoom}) {
+        foreach my $iPhone (keys %{$g_hRooms{$iRoom}->{occupants_by_phone}}) {
+            $iOccupants++ if (DSPS_User::humanUsersPhone($iPhone));
+        }
+    }
+
+    return $iOccupants;
+}
 
 
 sub roomStatus($;$$) {
