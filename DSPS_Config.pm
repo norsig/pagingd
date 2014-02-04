@@ -17,7 +17,7 @@ our @EXPORT = ('%g_hConfigOptions');
 our %g_hConfigOptions = ('require_at' => 0);;
 our $sConfigPath = '/usr/local/bin/dsps3';
 my @aValueDirectives = ('default_maint', 'gateway_url', 'gateway_params', 'fallback_email', 'recovery_regex', 'dsps_server', 'smtp_server', 'server_listen', 'smtp_from', 'admin_email', 
-                        'rt_connection', 'override_user', 'override_regex', 'rt_link', 'log_rooms_to');
+                        'rt_connection', 'override_user', 'override_regex', 'rt_link', 'log_rooms_to', 'nagios_problem_regex', 'nagios_any_regex');
 my @aBoolDirectives = ('show_nonhuman', 'require_at');
 my %hSeenAliases;
 
