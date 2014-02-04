@@ -298,15 +298,13 @@ sub timeLength($) {
 
 
 
-sub logRoom($;$) {
+sub logRoom($) {
     my $iRoom = shift;
-    my $sLogFile = shift || '/tmp/dsps-rooms.log';
+    my $sLogFile = main::getLogRoomsTo();
 
-    if (defined $g_hRooms{$iRoom}) {
+    if ((defined $g_hRooms{$iRoom}) && $sLogFile) {
         open(LOG, ">>$sLogFile") || return infoLog("Unable to write to $sLogFile");
         print LOG localtime($g_hRooms{$iRoom}->{creation_time}) . " for " . timeLength(time() - $g_hRooms{$iRoom}->{creation_time}) . "\t";
-
-        #my @aNames = map { $g_hUsers{$_}->{name} } (keys %{ $g_hRooms{$iRoom}->{most_occupants_by_phone} });
         print LOG roomStatus($iRoom, 0, 1, 1) . "\n";
 
         foreach my $sHistory (@{$g_hRooms{$iRoom}->{history}}) {
@@ -317,7 +315,6 @@ sub logRoom($;$) {
 
         close(LOG);
     }
-    
 }
 
 

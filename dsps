@@ -370,6 +370,7 @@ sub getShowNonHuman() { return $g_hConfigOptions{show_nonhuman}; }
 sub getAdminEmail() { return $g_hConfigOptions{admin_email}; }
 sub getRTLink() { return $g_hConfigOptions{rt_link}; }
 sub getUsersEscalationsEmails($) { return DSPS_Escalation::getUsersEscalationsEmails(shift); }
+sub getLogRoomsTo() { return $g_hConfigOptions{log_rooms_to}; }
 
 
 
