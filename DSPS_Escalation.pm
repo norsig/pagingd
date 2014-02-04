@@ -39,34 +39,34 @@ sub primeEscalation($$$) {
     my $iOncallPhone = getOncallPerson($sEscName);
 
     # put the oncall peson in a room with the sender
-    DSPS_Room::combinePeoplesRooms($g_hUsers{$sSender}, $g_hUsers{$iOncallPhone});
+    my $bRoomChanged = DSPS_Room::combinePeoplesRooms($g_hUsers{$sSender}, $g_hUsers{$iOncallPhone});
     my $iRoom = DSPS_Room::findUsersRoom($iOncallPhone);
     
     # never prime an escalation off of a recovery page
-    return 0 if (main::getRecoveryRegex() && $sMessage =~ main::getRecoveryRegex());
+    return $bRoomChanged if (main::getRecoveryRegex() && $sMessage =~ main::getRecoveryRegex());
 
     # are there enough other people in the room to skip the escalation?
     my $iOccupants = () = DSPS_Room::roomStatus($iRoom, 1, 1);
     if ($iOccupants >= $g_hEscalations{$sEscName}->{min_to_abort}) {
         infoLog($g_hUsers{$iOncallPhone}->{name} . " is already in room $iRoom which has $iOccupants people" .
             " - aborting $sEscName escalation");
-        return 0;
+        return $bRoomChanged;
     }
 
     # is the sending user human?  if so we've already pulled the person in, so we're done.  we don't want to start an escalation timer for a human
-    return 0 if (DSPS_User::humanUsersPhone($sSender));
+    return $bRoomChanged if (DSPS_User::humanUsersPhone($sSender));
 
     # is an escalation already in progress in this room?
     if ($g_hRooms{$iRoom}->{escalation_time}) {
         debugLog(D_escalations, $g_hUsers{$iOncallPhone}->{name} . " is in room $iRoom which already has an escalation timer in progress - won't reset");
-        return 0;
+        return $bRoomChanged;
     }
 
     # did the on call person in the room respond within the last 20 minutes?  if so we're not going to prime another escalation
     # this is primiarly to catch flapping nagios issues where the on call person is constantly having to disarm escalations
     if ($g_hRooms{$iRoom}->{last_human_reply_time} >= time() - 1200) {
         debugLog(D_escalations, $g_hUsers{$iOncallPhone}->{name} . " has responded within the last 20 minutes;  not rearming the escalation");
-        return 0;
+        return $bRoomChanged;
     }
 
     # it's a go - setup the escalation
@@ -96,7 +96,7 @@ sub primeEscalation($$$) {
     infoLog("escalation timer of " . $g_hEscalations{$sEscName}->{timer} . " seconds started for room $iRoom via $sEscName (" .
         $g_hUsers{$iOncallPhone}->{name} . ' -> ' . $g_hRooms{$iRoom}->{escalation_to} .")");
 
-    return ($g_hRooms{$iRoom}->{ticket_number} ? $g_hRooms{$iRoom}->{ticket_number} : 0);
+    return $bRoomChanged;
 }
 
 
@@ -236,7 +236,6 @@ sub checkEscalationCancel($$) {
             
             $g_hRooms{$iRoom}->{escalation_time} = 0;
             $g_hRooms{$iRoom}->{escalation_to} = '';
-            $g_hRooms{$iRoom}->{escalation_orig_sender} = '';
             $g_hRooms{$iRoom}->{escalation_name} = '';
 
             infoLog("checkEscalationCancel: $sEscName");
@@ -302,7 +301,6 @@ sub checkEscalationTimes() {
         # and we do it after the above processMentions() so it doesn't recursively setup another escalation - it will see this one in progress
         $g_hRooms{$iRoom}->{escalation_time} = 0;
         $g_hRooms{$iRoom}->{escalation_to} = '';
-        $g_hRooms{$iRoom}->{escalation_orig_sender} = '';
         $g_hRooms{$iRoom}->{escalation_name} = '';
 
         # send out the pages

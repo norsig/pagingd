@@ -29,6 +29,8 @@ sub createRoom {
 
     $g_hRooms{$iEmptyRoom} = {
         occupants_by_phone => {},
+        saved_occupants_by_phone => {},
+        most_occupants_by_phone => {},
         expiration_time => time() + 3600,
         escalation_time => 0,
         escalation_to => '',
@@ -41,6 +43,7 @@ sub createRoom {
         ack_mode => 0,
         last_problem_time => 0,
         last_human_reply_time => 0,
+        creation_time => time(),
     };
 
     debugLog(D_rooms, "created room #$iEmptyRoom with expiration of " . $g_hRooms{$iEmptyRoom}->{expiration_time});
@@ -55,6 +58,30 @@ sub destroyRoom($) {
     debugLog(D_rooms, "cleaned up room #$iRoomNumber");
 }
 
+
+sub checkpointOccupants($) {
+    my $iRoom = shift;
+
+    if ($iRoom && (defined $g_hRooms{$iRoom})) {
+        my %SavedOccupants = defined($g_hRooms{$iRoom}->{occupants_by_phone}) ? %{$g_hRooms{$iRoom}->{occupants_by_phone}} : {};
+        $g_hRooms{$iRoom}->{saved_occupants_by_phone} = \%SavedOccupants;
+    }
+}
+
+
+sub diffOccupants($) {
+    my $iRoom = shift;
+    my %hPrevOccupants = defined($g_hRooms{$iRoom}->{saved_occupants_by_phone}) ? %{$g_hRooms{$iRoom}->{saved_occupants_by_phone}} : {};
+    my @aResult;
+
+    foreach my $iPhone (keys %{$g_hRooms{$iRoom}->{occupants_by_phone}}) {
+        push(@aResult, $iPhone) unless defined ($hPrevOccupants{$iPhone});
+    }
+
+    debugLog(D_pageEngine, "diff is [" . join(', ', @aResult) . ']') if ($#aResult > -1);
+
+    return @aResult;
+}
 
 
 sub combinePeoplesRooms($$) {
@@ -115,7 +142,7 @@ sub createRoomWithUser($) {
     my $iUser = shift;
 
     my $iRoom = createRoom();
-    $g_hRooms{$iRoom}->{occupants_by_phone}{$iUser} = 1;
+    roomEnsureOccupant($iRoom, $iUser);
     debugLog(D_rooms, 'user ' . $g_hUsers{$iUser}->{name} . " ($iUser) added to room $iRoom on create");
 
     return $iRoom;
@@ -148,10 +175,11 @@ sub roomHumanCount($) {
 }
 
 
-sub roomStatus($;$$) {
+sub roomStatus($;$$$) {
     my $iTargetRoom = shift;
     my $bNoGroupNames = shift || 0;
     my $bSquashSystemUsers = shift || 0;
+    my $bUseMostOccupants = shift || 0;
     my $sFullResult = '';
     my %hFullHash = ();
 
@@ -159,7 +187,7 @@ sub roomStatus($;$$) {
         next if ($iTargetRoom && ($iRoom != $iTargetRoom));  # target == 0 means all rooms
 
         # our room stores a list of all occupants
-        my %hRoomOccupants = %{$g_hRooms{$iRoom}->{occupants_by_phone}};
+        my %hRoomOccupants = %{ ($bUseMostOccupants ? $g_hRooms{$iRoom}->{most_occupants_by_phone} : $g_hRooms{$iRoom}->{occupants_by_phone}) };
         
         # but the list of people can get pretty long if we try to print them all one by one
         # so lets substitute in group names if every person from a given group is in the room
@@ -214,6 +242,7 @@ sub roomEnsureOccupant {
 	my ($iRoomNumber, $sUserPhone) = @_;
 
     $g_hRooms{$iRoomNumber}->{occupants_by_phone}{$sUserPhone} = 1;
+    $g_hRooms{$iRoomNumber}->{most_occupants_by_phone}{$sUserPhone} = 1;
 	debugLog(D_rooms, "adding user with phone $sUserPhone to room #$iRoomNumber");
 }
 
@@ -233,10 +262,64 @@ sub roomsHealthCheck {
 
         if ($g_hRooms{$iRoomNumber}->{expiration_time} <= time()) {
             infoLog("room $iRoomNumber expired with " . keys(%{$g_hRooms{$iRoomNumber}->{occupants_by_phone}}) . " occupants");
+            logRoom($iRoomNumber);
             delete $g_hRooms{$iRoomNumber};
         }
     }
 }
+
+
+
+sub timeLength($) {
+    my $iDiffSecs = shift;
+    my $sResult = '';
+
+    if ($iDiffSecs >= 3600) {
+        my $iHours = int($iDiffSecs / 3600);
+        $sResult = "$iHours hour" . ($iHours > 1 ? 's' : '');
+        $iDiffSecs -= 3600 * $iHours;
+    }
+
+    if ($iDiffSecs >= 60) {
+        my $iMinutes = int($iDiffSecs / 60);
+        $sResult .= ($sResult ? ', ' : '') . "$iMinutes minute" . ($iMinutes > 1 ? 's' : '');
+        $iDiffSecs -= 60 * $iMinutes;
+    }
+
+    # only show seconds if there are no hours or minutes
+    if (!$sResult && $iDiffSecs) {
+        $sResult = "$iDiffSecs second" . ($iDiffSecs > 1 ? 's' : '');
+    }
+
+    $sResult = '0 minutes' unless $sResult;
+
+    return $sResult;
+}
+
+
+
+sub logRoom($;$) {
+    my $iRoom = shift;
+    my $sLogFile = shift || '/tmp/dsps-rooms.log';
+
+    if (defined $g_hRooms{$iRoom}) {
+        open(LOG, ">>$sLogFile") || return infoLog("Unable to write to $sLogFile");
+        print LOG localtime($g_hRooms{$iRoom}->{creation_time}) . " for " . timeLength(time() - $g_hRooms{$iRoom}->{creation_time}) . "\t";
+
+        #my @aNames = map { $g_hUsers{$_}->{name} } (keys %{ $g_hRooms{$iRoom}->{most_occupants_by_phone} });
+        print LOG roomStatus($iRoom, 0, 1, 1) . "\n";
+
+        foreach my $sHistory (@{$g_hRooms{$iRoom}->{history}}) {
+            print LOG $sHistory . "\n";
+        }
+
+        print LOG "--------------------------------------------------------------------------------\n";
+
+        close(LOG);
+    }
+    
+}
+
 
 
 1;

@@ -78,10 +78,14 @@ POSIX::sigaction(&POSIX::SIGTERM, $tSignalActionTerm);
 POSIX::sigaction(&POSIX::SIGHUP, $tSignalActionHup);
 $SIG{CHLD} = 'IGNORE';
 
-my $g_tListenerSocket;         # listener socket global so we can shut it down in a signal handler
+# globals
+my $g_tListenerSocket;         
 my $g_sConfigFilename = '';
 
 
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Signal handler for a SIGINT
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub handlerDaemonExit() {
     $g_tListenerSocket->shutdown(2);
     $g_tListenerSocket->close();
@@ -93,6 +97,9 @@ sub handlerDaemonExit() {
 }
 
 
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Signal handler for a SIGHUP
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub handlerSigHup() {
     infoLog('daemon caught SIGHUP - rereading config');
     saveState();
@@ -109,6 +116,11 @@ sub handlerSigHup() {
 
 
 
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Determine the server address - this is used for
+# both the address to listen on and the address
+# to connect to for a remote server.
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub getServerAddress($$$) {
     my $bListen     = shift;
     my $sServerAddr = shift;    # defaults
@@ -136,6 +148,10 @@ sub getServerAddress($$$) {
 
 
 
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Save all state data to a file except for current
+# room occupants.
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub saveState() {
     open(STATE, ">" . C_StatePath) || return infoLog('Unable to save state (need write access to ' . C_StatePath . ')');
     print STATE DSPS_User::freezeState() . "\n";
@@ -146,6 +162,10 @@ sub saveState() {
 }
 
 
+
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Read state data from a file
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub restoreState() {
     open(STATE, C_StatePath) || return infoLog('No saved state to restore (' . C_StatePath . ')');
     my $sUsers = <STATE>;
@@ -162,8 +182,11 @@ sub restoreState() {
 }
 
 
-# send an email
-# $sMessage should start with the Subject line, then a blank line, then the message
+
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Send an email - $sMessage should start with the
+# Subject line, then a blank line, then the message
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub sendEmail($$$) {
     my $sTo = shift;
     my $sCc = shift;
@@ -217,6 +240,10 @@ sub sendEmail($$$) {
 
 
 
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Execute an RT command potentially on a remote
+# server.
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub rtCommand($;$) {
     my $sCommand = shift;
     my $sInput = shift || '';
@@ -226,6 +253,9 @@ sub rtCommand($;$) {
     # we fork into the background and continue on immediately.
     if ($sInput) {
         unless (fork()) {
+            # close the listening socket in the child
+            $g_tListenerSocket->close();
+
             $sResult = `/bin/echo "$sInput" | $g_hConfigOptions{rt_connection} $sCommand`;
             debugLog(D_rt, "$sCommand [bg] returned  $sResult");
             exit(0);
@@ -244,6 +274,9 @@ sub rtCommand($;$) {
 
 
 
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Create a new RT ticket via rtCommand()
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub rtCreateTicket($$$) {
     my $sMessage = shift;
     my $sQueue = shift;
@@ -262,6 +295,9 @@ sub rtCreateTicket($$$) {
 
 
 
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Substitute in all user macros
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub replaceUserMacros($$) {
     my $iSender = shift;
     my $sMessage = shift;
@@ -290,6 +326,10 @@ sub replaceUserMacros($$) {
 }
 
 
+
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Clean up a message before it goes out
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub messagePostFixUp($) {
     my $sMessage = shift;
     my $sCompressedMessage = $sMessage;
@@ -338,7 +378,6 @@ sub helpSearch($) {
     my @aResults;
 
     foreach my $sT (@A_HelpTopics) {
-        debugLog(D_pageEngine, "checking $sT against $sTopic");
         if ($sT =~ /$sTopic/i) {
             push(@aResults, $sT);
         }
@@ -355,6 +394,17 @@ sub sendSmsPage($$) {
     # trim to 160 characters
     $sMessage = substr($sMessage, 0, 160) if length($sMessage) > 160;
 
+    unless (DSPS_User::humanUsersPhone($iCellNumber)) {
+        infoLog("dropping requested page to system user " . $g_hUsers{$iCellNumber}->{name} . ": $sMessage");
+        return;
+    }
+
+    # bail if testing
+    if (TEST_RUN) {
+        infoLog("FAKE PAGE " . $g_hUsers{$iCellNumber}->{name} . " ($iCellNumber): $sMessage");
+        return;
+    }
+
     # append a random character to make the message unique
     # (sms gateway companies often filter out dupes)
     if (DSPS_User::previouslySentTo($iCellNumber, $sMessage)) {
@@ -369,16 +419,12 @@ sub sendSmsPage($$) {
         }
     }
 
-    unless (DSPS_User::humanUsersPhone($iCellNumber)) {
-        infoLog("dropping requested page to system user " . $g_hUsers{$iCellNumber}->{name} . ": $sMessage");
-        return;
-    }
+    # fork a child to send the page.  that way pages to a large recipient list can become
+    # a large number of children and go out near simultaneously
+    return if fork();  # parent
 
-    # bail if testing
-    if (TEST_RUN) {
-        infoLog("FAKE PAGE " . $g_hUsers{$iCellNumber}->{name} . " ($iCellNumber): $sMessage");
-        return;
-    }
+    # close the listening socket in the child
+    $g_tListenerSocket->close();
 
     # prepare the gateway API call POST parameters from our config options
     my %hGatewayParams = ();
@@ -407,6 +453,8 @@ sub sendSmsPage($$) {
             close(MAIL);
         }
     }
+
+    exit(0);  # child
 }
 
 
@@ -421,7 +469,6 @@ sub handlePagingCommands($$) {
     $sMessage = ':leave' if $sMessage eq '-';
 
     # does the message parse as a command?
-    #if ($sMessage =~ /^\s*([:?])\s*(\w+)([-+]*)\s*(.*)/) {
     if ($sMessage =~ /^\s*([:?])\s*(\w*)([-+]*)\s*(.*)/) {
         $sCommand = $1 . $2;
         $sCommand =~ tr[A-Z][a-z];
@@ -725,7 +772,10 @@ sub handlePagingCommands($$) {
             if ($iRoom) {
                 sendSystemMessageToRoom($iSender, 'left the room.', $iSilenceModifier);
                 DSPS_Room::roomRemoveOccupant($iRoom, $iSender);
-                DSPS_Room::destroyRoom($iRoom) unless DSPS_Room::roomHumanCount($iRoom);
+                if (!DSPS_Room::roomHumanCount($iRoom)) {
+                    DSPS_Room::logRoom($iRoom);
+                    DSPS_Room::destroyRoom($iRoom) 
+                }
             }
             else {
                 sendSmsPage($iSender, t(S_NotInRoom));
@@ -741,6 +791,7 @@ sub handlePagingCommands($$) {
 
                 if ($iRoom) {
                     sendSystemMessageToRoom($iSender, 'disbanded the room.', $iSilenceModifier);
+                    DSPS_Room::logRoom($iRoom);
                     DSPS_Room::destroyRoom($iRoom);
                 }
                 else {
@@ -1087,7 +1138,7 @@ sub processMentions($$$;$) {
 
         if ($sScanMessage =~ /$sAt($sEscName)\b/i) {
             debugLog(D_pageEngine, "found mention of escalation $sEscName");
-            $bRoomChanged = (DSPS_Escalation::primeEscalation($sSender, $sEscName, $sRealMessage) > 0) || $bRoomChanged;
+            $bRoomChanged = DSPS_Escalation::primeEscalation($sSender, $sEscName, $sRealMessage) || $bRoomChanged;
         }
     }
 
@@ -1137,9 +1188,6 @@ sub sendUserMessageToRoom($$$) {
 
     # if this is a problem page from nagios record the time in the room
     $g_hRooms{$iRoom}->{last_problem_time} = time() if ($sMessage =~ /^[-+!]{0,1}PROBLEM/);
-
-    # if this is a human reply record the time in the room
-    $g_hRooms{$iRoom}->{last_human_reply_time} = time() if (DSPS_User::humanUsersPhone($iSenderPhone));
 
     # determine the current audience
     # bsUpdateAudience can be false, true, or an addition message to prefix the audience with
@@ -1306,7 +1354,24 @@ sub processPageEngine($$) {
                     $bRoomChanged = processMentions($iSender, $g_hUsers{$iSender}->{auto_include}, $sOrigMessage) || $bRoomChanged;
                 }
                 else {
+                    DSPS_Room::checkpointOccupants($iRoom) if $iRoom;
                     $bRoomChanged = processMentions($iSender, $sMessage, $sOrigMessage) || $bRoomChanged;
+
+                    # at this point $iRoom is the room the sender was in when this function started.  it may be 0 if the person wasn't in
+                    # a room, even if the above processMention() has now put them in a room.  but if they weren't in a room at the start
+                    # then there's no point in the below logic as there's no room history to search.  we also don't want to run this because
+                    # it will instantiate a non-existent room (#0).  hence, "if ($iRoom) {"
+                    if ($iRoom) {
+                        my @aHistory = defined($g_hRooms{$iRoom}->{history}) ? @{$g_hRooms{$iRoom}->{history}} : ();
+
+                        if ($g_hRooms{$iRoom}->{escalation_orig_sender} && 
+                            !DSPS_User::humanUsersPhone($g_hRooms{$iRoom}->{escalation_orig_sender}) && ($#aHistory < 7)) {
+
+                            foreach my $iNewPhone (DSPS_Room::diffOccupants($iRoom)) {
+                                sendSmsPage($iNewPhone, 'RESEND: ' . $aHistory[0]);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1334,9 +1399,9 @@ sub processPageEngine($$) {
 
         sendUserMessageToRoom($iSender, $sOrigMessage, $bRoomChanged);
     }
-    else {
-        $g_hRooms{$iRoom}->{last_human_reply_time} = time();
-    }
+
+    # if this is a human reply record the time in the room
+    $g_hRooms{$iRoom}->{last_human_reply_time} = time() if ((defined $g_hRooms{$iRoom}) && DSPS_User::humanUsersPhone($iSender));
 
     return 'Message submitted.';
 }
@@ -1517,8 +1582,8 @@ sub showUsage() {
     #print "$0 daemon\n\tStart the paging daemon in the background\n\n$0 submit [user] [message]\n\tSubmit a message from a paging user\n" .
     #    "\n$0 submitemail [user] [message]\n\tSubmit an email from a user - the body will be used as the message\n" .
     #    "\n With both forms of submit, as an alternative the message can be piped into stdin.\n";;
-    print "$0 [-d | -s | -e | -o escalation] [-c config_file] [-u user] [message]\n   -d  start the paging daemon in the background\n   -s  submit a message (pipe to stdin or via CLI)\n";
-    print "   -e  submit an email (pipe to stdin or via CLI), i.e. ignore headers\n   -u  specify the submitting paging user\n   -o  print current oncall schedule for a given escalation\n";
+    print "$0 [-d | -s | -e | -p escalation] [-c config_file] [-u user] [message]\n   -d  (re)start the paging daemon in the background\n   -s  submit a message (pipe to stdin or via CLI)\n";
+    print "   -e  submit an email (pipe to stdin or via CLI), i.e. ignore headers\n   -u  specify the submitting paging user\n   -p  print current oncall schedule for a given escalation\n";
     print "   -f  fast message submission to the daemon; don't wait for processing\n   -c  specify a config filename (default /usr/local/bin/dsps3/config.dsps)\n";
 }
 
@@ -1564,7 +1629,7 @@ sub clientStartup() {
         'config=s'  => \$g_sConfigFilename,
         't'         => \$bCmdRunTests,
         'user=s'    => \$sUser,
-        'oncall=s'  => \$sEscalation
+        'print=s'   => \$sEscalation
     );
 
     my $sMessage = $ARGV[0] || '';
