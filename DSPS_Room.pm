@@ -60,6 +60,25 @@ sub destroyRoom($) {
 }
 
 
+sub cloneRoomMinusOccupants($) {
+    my $iOrigRoom = shift;
+    my $iNewRoom = createRoom();
+
+    $g_hRooms{$iNewRoom}->{most_occupants_by_phone} = $g_hRooms{$iOrigRoom}->{most_occupants_by_phone};
+    $g_hRooms{$iNewRoom}->{escalation_orig_sender} = $g_hRooms{$iOrigRoom}->{escalation_orig_sender};
+    $g_hRooms{$iNewRoom}->{ticket_number} = $g_hRooms{$iOrigRoom}->{ticket_number};
+    $g_hRooms{$iNewRoom}->{history} = $g_hRooms{$iOrigRoom}->{history};
+    $g_hRooms{$iNewRoom}->{maintenance} = $g_hRooms{$iOrigRoom}->{maintenance};
+    $g_hRooms{$iNewRoom}->{ack_mode} = $g_hRooms{$iOrigRoom}->{ack_mode};
+    $g_hRooms{$iNewRoom}->{last_problem_time} = $g_hRooms{$iOrigRoom}->{last_problem_time};
+    $g_hRooms{$iNewRoom}->{last_human_reply_time} = $g_hRooms{$iOrigRoom}->{last_human_reply_time};
+    $g_hRooms{$iNewRoom}->{creation_time} = $g_hRooms{$iOrigRoom}->{creation_time};
+    $g_hRooms{$iNewRoom}->{last_nonhuman_message} = $g_hRooms{$iOrigRoom}->{last_nonhuman_message};
+
+    debugLog(D_rooms, "room $iOrigRoom cloned to $iNewRoom");
+    return $iNewRoom;
+}
+
 sub checkpointOccupants($) {
     my $iRoom = shift;
 

@@ -804,6 +804,35 @@ sub handlePagingCommands($$) {
             return 1;
         }
 
+        # pull occupants to a new room with sender
+        if ($sCommand eq ':pull') {
+            if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':pull')) {
+
+                if ($sParams) {
+                    my $iOrigRoom = DSPS_Room::findUsersRoom($iSender);
+
+                    if ($iOrigRoom) {
+                        sendSystemMessageToRoom($iSender, 'disbanded the room.', $iSilenceModifier);
+
+                        my $iNewRoom = DSPS_Room::cloneRoomMinusOccupants($iOrigRoom);
+                        DSPS_Room::destroyRoom($iOrigRoom);
+                        DSPS_Room::roomEnsureOccupant($iNewRoom, $iSender);
+                        processMentions($iSender, $sParams, $sParams, 1);
+
+                        my $sAudience = S_AudienceUpdate . ' ' . DSPS_Room::roomStatus($iNewRoom) . ($g_hRooms{$iNewRoom}->{ticket_number} ? ('. Tkt: ' . $g_hRooms{$iNewRoom}->{ticket_number}) : '');
+
+                        foreach my $iUserPhone (keys %{ $g_hRooms{$iNewRoom}->{occupants_by_phone} }) {
+                            if (DSPS_User::humanUsersPhone($iUserPhone)) {
+                                sendSmsPage($iUserPhone, t(($iSender == $iUserPhone ? 'You' : $g_hUsers{$iSender}->{name}) . " pulled: " . $sAudience)); 
+                            }
+                        }
+                    }
+                }
+            }
+
+            return 1;
+        }
+
         # enable smart sleep recoveries
         if ($sCommand =~ /^:smartrecover/) {
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':norecovery')) {
@@ -1121,7 +1150,6 @@ sub processMentions($$$;$) {
             }
         }
     }
-
 
     # look for user mentions - similar to matchUserByRegex() but we need to continue iterating to look for all matches
     foreach my $iUserPhone (keys %g_hUsers) {
