@@ -3,6 +3,7 @@ package DSPS_SystemFilter;
 use FreezeThaw qw(freeze thaw);
 use DSPS_User;
 use DSPS_Room;
+use DSPS_Config;
 use DSPS_Debug;
 use strict;
 use warnings;
@@ -54,7 +55,7 @@ sub blockedByFilter($$) {
 
     # check the all nagios filter
     if (($iFilterAllNagiosTill > $iNow) &&
-        ($sMessage =~ /^[-+!]{0,1}(PROBLEM|RECOVERY)/)) { 
+        ($sMessage =~ /$g_hConfigOptions{nagios_any_regex}/)) { 
         infoLog("message matched All Nagios filter");
         return 1;
     }
