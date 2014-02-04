@@ -44,6 +44,7 @@ sub createRoom {
         last_problem_time => 0,
         last_human_reply_time => 0,
         creation_time => time(),
+        last_nonhuman_message => '',
     };
 
     debugLog(D_rooms, "created room #$iEmptyRoom with expiration of " . $g_hRooms{$iEmptyRoom}->{expiration_time});

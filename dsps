@@ -1188,7 +1188,10 @@ sub sendUserMessageToRoom($$$) {
     substr($sMessage, 0, 1) = '' if substr($sMessage, 0, 1) eq '!';
 
     # if this is a problem page from nagios record the time in the room
-    $g_hRooms{$iRoom}->{last_problem_time} = time() if ($sMessage =~ /^[-+!]{0,1}PROBLEM/);
+    $g_hRooms{$iRoom}->{last_problem_time} = time() if ($sMessage =~ /$g_hConfigOptions{nagios_problem_regex}/);
+
+    # track the last automation message for resends
+    $g_hRooms{$iRoom}->{last_nonhuman_message} = $sMessage unless DSPS_User::humanUsersPhone($iSenderPhone);
 
     # determine the current audience
     # bsUpdateAudience can be false, true, or an addition message to prefix the audience with
@@ -1361,15 +1364,15 @@ sub processPageEngine($$) {
                     # at this point $iRoom is the room the sender was in when this function started.  it may be 0 if the person wasn't in
                     # a room, even if the above processMention() has now put them in a room.  but if they weren't in a room at the start
                     # then there's no point in the below logic as there's no room history to search.  we also don't want to run this because
-                    # it will instantiate a non-existent room (#0).  hence, "if ($iRoom) {"
-                    if ($iRoom) {
-                        my @aHistory = defined($g_hRooms{$iRoom}->{history}) ? @{$g_hRooms{$iRoom}->{history}} : ();
+                    # it will instantiate a non-existent room (#0).  hence, "if ($iRoom)"
+                    infoLog("sender is $iSender, time = " . $g_hRooms{$iRoom}->{last_problem_time} . ", msg = " . $g_hRooms{$iRoom}->{last_nonhuman_message}) if ($iRoom);
+                    if ($iRoom && DSPS_User::humanUsersPhone($iSender) && $g_hRooms{$iRoom}->{last_nonhuman_message}) {
 
                         if ($g_hRooms{$iRoom}->{escalation_orig_sender} && 
-                            !DSPS_User::humanUsersPhone($g_hRooms{$iRoom}->{escalation_orig_sender}) && ($#aHistory < 7)) {
+                            !DSPS_User::humanUsersPhone($g_hRooms{$iRoom}->{escalation_orig_sender}) && ($g_hRooms{$iRoom}->{last_problem_time} >= time() - 120)) {
 
                             foreach my $iNewPhone (DSPS_Room::diffOccupants($iRoom)) {
-                                sendSmsPage($iNewPhone, 'RESEND: ' . $aHistory[0]);
+                                sendSmsPage($iNewPhone, 'RESEND: ' . $g_hRooms{$iRoom}->{last_nonhuman_message});
                             }
                         }
                     }
