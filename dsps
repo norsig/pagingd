@@ -827,6 +827,12 @@ sub handlePagingCommands($$) {
                             }
                         }
                     }
+                    else { 
+                        sendSmsPage($iSender, t(S_NotInRoom)); 
+                    }
+                }
+                else {
+                    sendSmsPage($iSender, t(S_PullSyntax));
                 }
             }
 
@@ -961,7 +967,7 @@ sub handlePagingCommands($$) {
         }
 
         # check an autoreply
-        if ($sCommand =~ /^?\s*(autoreply|ar)/) { 
+        if ($sCommand =~ /^\?\s*(autoreply|ar)/) { 
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':autoreply')) { 
                     if (my $sAr = DSPS_User::getAutoReply($iSender)) {
                         sendSmsPage($iSender, t("Your current auto reply: \"$sAr\""));
@@ -974,9 +980,16 @@ sub handlePagingCommands($$) {
             return 1;
         }
 
-        # help
+        # command help
+        if ($sCommand =~ /^\?\s*command/) {
+            sendSmsPage($iSender, t(S_HelpCommandsA));
+            sendSmsPage($iSender, t(S_HelpCommandsB));
+            return 1;
+        }
+
+        # general help
         if ($sCommand =~ /^\?\s*$/) {
-            sendSmsPage($iSender, "?oncall\n?rooms\n?vacation\n?rt\n?filter\n?NAME\n:macro\n:nonagios\nnorecovery\n:smartrecovery\n:vacation\n:leave\n:email\n:disband\n:autoreply\n:sleep\n:maint\n:swap\n:ack\n?help TOPIC");
+            sendSmsPage($iSender, t(S_HelpGeneral));
             return 1;
         }
 
@@ -993,7 +1006,7 @@ sub handlePagingCommands($$) {
                 return 1;
             }
 
-            sendSmsPage($iSender, t("?help TOPIC"));
+            sendSmsPage($iSender, t(S_HelpSyntax));
             return 1;
         }
 
@@ -1393,7 +1406,6 @@ sub processPageEngine($$) {
                     # a room, even if the above processMention() has now put them in a room.  but if they weren't in a room at the start
                     # then there's no point in the below logic as there's no room history to search.  we also don't want to run this because
                     # it will instantiate a non-existent room (#0).  hence, "if ($iRoom)"
-                    infoLog("sender is $iSender, time = " . $g_hRooms{$iRoom}->{last_problem_time} . ", msg = " . $g_hRooms{$iRoom}->{last_nonhuman_message}) if ($iRoom);
                     if ($iRoom && DSPS_User::humanUsersPhone($iSender) && $g_hRooms{$iRoom}->{last_nonhuman_message}) {
 
                         if ($g_hRooms{$iRoom}->{escalation_orig_sender} && 
@@ -1725,6 +1737,9 @@ sub clientStartup() {
                     if ($bQuotedPrintable) {
                         s/=(\n*)$/$1/;
                         s/=3D/=/g;
+
+                        my $iCount = s/=00//g;
+                        s/=00//g if ($iCount > 1);
                     }
 
                     s/\&apos;/\'/g;

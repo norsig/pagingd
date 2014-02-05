@@ -8,8 +8,9 @@ use base 'Exporter';
 our @EXPORT = ('t', 'sv', 'cr', 'S_NoPermission', 'S_NoConversations', 'S_AudienceUpdate', 'S_YoureAlone', 'S_NotInRoom', 'S_NowInMaint',
                 'S_UnknownCommand', 'S_NeedTime', 'S_RecoveryAlreadyF', 'S_RecoveryAlreadyU', 'S_RecoveryFiltered', 'S_RecoveryEnabled', 'S_NoReBroadcast',
                 'S_NothingToSwap', 'S_NoRecipSwap1', 'S_SwapSyntax', 'S_NoSwapMatches1', 'S_MultipleMatches3', 'S_UnsharedSchedule2', 'S_ScheduleSwap1',
-                'C_PIDPath', 'C_StatePath', 'S_AutoReplySyx', 'S_AutoReplySet1', 'S_AutoReplyRm', 'S_NoSuchEscalation1', 'S_NoEscalations', 'S_NoSuchEntity', 'S_NoSuchHelp',
+                'C_PIDPath', 'C_StatePath', 'S_AutoReplySyx', 'S_AutoReplySet1', 'S_AutoReplyRm', 'S_NoSuchEscalation1', 'S_NoEscalations', 'S_NoSuchEntity', 'S_NoSuchHelp', 'S_PullSyntax',
                 'S_SmartAlreadyF', 'S_SmartFiltered', 'E_SwapSuccess4', 'S_EmailSent1', 'S_NeedEmail', 'E_VacationSet2', 'E_VacationCancel1', 'E_VacationElapsed1',
+                'S_HelpGeneral', 'S_HelpCommandsA', 'S_HelpCommandsB', 'S_HelpSyntax',
                 'E_EscalationFire1', 'S_VacaNeedTime', 'S_NoVacations', 'S_AmbiguousIgnored1', 'S_AmbiguousReject2', '@A_HelpTopics');
 
 use constant S_NoPermission     => "You don't have permission for this command.";
@@ -46,7 +47,12 @@ use constant S_VacaNeedTime     => "The vacation command needs a time specified.
 use constant S_NoVacations      => "No one has currently configured vacation time.";
 use constant S_AmbiguousIgnored1=> "Ambiguous name reference '%%' ignored;  message was sent as is.";
 use constant S_AmbiguousReject2 => "%% is ambiguous.  Try %%.";
+use constant S_PullSyntax       => "Use ':pull NAMES' to pull users and/or groups into a new room with you, disbanding your previous room.";
 use constant S_NoSuchHelp       => 'There are no help topics that match your search.';
+use constant S_HelpGeneral      => "Use:\n  ?help TOPIC\nfor help on a particular subject, be it a command or general description (single word).\n\n  ?commands\nto get a list of commands.";
+use constant S_HelpCommandsA    => "?oncall\n?rooms\n?vacation\n?filter\n?groups\n?NAME\n:macro\n:nonagios\nnorecovery\n:smartrecovery\n:vacation\n:leave\n:email";
+use constant S_HelpCommandsB    => ":disband\n:pull NAMES\n:autoreply\n:sleep\n:maint\n:swap\n:ack\n?help TOPIC";
+use constant S_HelpSyntax       => "?help TOPIC\nwhere topic can be a command, description or idea you help with.  Try to keep the topic to a single word for better results.";
 
 
 use constant E_SwapSuccess4     => "Subject: Oncall schedule change\n\n" .
@@ -77,6 +83,9 @@ our @A_HelpTopics = (
     "?macros (query)\n" .
     ":nomacros (delete all)",
 
+    ":disband (does current rm)\n" .
+    ":pull NAMES (new rm w/names)",
+
     ":nonagios (block)\n" .
     ":nagios (unblock)\n" .
     ":noregex T RE (block)\n" .
@@ -98,12 +107,13 @@ our @A_HelpTopics = (
 
     ":email ADDRESS",
 
-    ":ack (enable room acknowledgement mode)",
+    ":ack (enable room ack)",
 
     "?oncall\n" .
     "?rooms\n" .
     "?groups\n" .
-    "?GROUP\n" 
+    "?GROUP\n" . 
+    "?NAME" 
 );
 
 
