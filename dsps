@@ -400,6 +400,12 @@ sub sendSmsPage($$) {
         return;
     }
 
+    if ($iCellNumber =~ /^\s*$/) {
+        infoLog("no number specified;  dropping outgoing page");
+        sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected - blank user\n\nUsers are currently: " . join(', ', sort keys %g_hUsers));
+        return;
+    }
+
     # bail if testing
     if (TEST_RUN) {
         infoLog("FAKE PAGE " . $g_hUsers{$iCellNumber}->{name} . " ($iCellNumber): $sMessage");
@@ -440,6 +446,13 @@ sub sendSmsPage($$) {
             $hGatewayParams{$sParam} = $sValue;
         }
     }
+
+    # because we fork all outgoing messages into child procs they finish at different times.
+    # there's no way to predict which will get to the user first.  we still can't guarantee but
+    # if we add a second of sleep before audience update lines hopefully the actual messages
+    # will get there first and the audience updates second.
+    my $sAudiencePrefix = t("Audience is now");
+    sleep(1) if ($sMessage =~ /^$sAudiencePrefix/);
 
     # send the page (perform POST)
     my $tBrowser = LWP::UserAgent->new;
@@ -1169,7 +1182,7 @@ sub processMentions($$$;$) {
         next if !$bIncludeSystemUsers && $g_hUsers{$iUserPhone}->{name} =~ /^\!/;
 
         if ($sScanMessage =~ /$sAt($g_hUsers{$iUserPhone}->{regex})\b/i) {
-            debugLog(D_pageEngine, "found mention of user " . $g_hUsers{$iUserPhone}->{name});
+            debugLog(D_pageEngine, "found mention of user " . $g_hUsers{$iUserPhone}->{name} . " ($iUserPhone)");
             $bRoomChanged = DSPS_Room::combinePeoplesRooms($g_hUsers{$sSender}, $g_hUsers{$iUserPhone}) || $bRoomChanged;
         }
     }
