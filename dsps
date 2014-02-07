@@ -63,8 +63,8 @@ use strict;
 # You can also use 0 or D_all.
 #-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 
-our $g_iDebugTopics = D_all & ~D_config & ~D_users & ~D_state;
-#our $g_iDebugTopics = 0;
+our $g_iDebugTopics = 0;
+#our $g_iDebugTopics = D_all & ~D_config & ~D_users & ~D_state;
 
 # drop root privs to become 'nobody'
 $< = $> = 65534 unless ($< == 65534);
@@ -82,10 +82,20 @@ $SIG{CHLD} = 'IGNORE';
 my $g_tListenerSocket;         
 my $g_sConfigFilename = '';
 
+# these one-liners exist as functions so they can be called by some of the included modules
+# essentially these avoid circular include dependencies
+sub getRecoveryRegex() { return $g_hConfigOptions{recovery_regex}; }
+sub getShowNonHuman() { return $g_hConfigOptions{show_nonhuman}; }
+sub getAdminEmail() { return $g_hConfigOptions{admin_email}; }
+sub getRTLink() { return $g_hConfigOptions{rt_link}; }
+sub getUsersEscalationsEmails($) { return DSPS_Escalation::getUsersEscalationsEmails(shift); }
+sub getLogRoomsTo() { return $g_hConfigOptions{log_rooms_to}; }
 
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Signal handler for a SIGINT
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub handlerDaemonExit() {
     $g_tListenerSocket->shutdown(2);
     $g_tListenerSocket->close();
@@ -97,7 +107,7 @@ sub handlerDaemonExit() {
 }
 
 
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Signal handler for a SIGHUP
 #-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub handlerSigHup() {
@@ -116,11 +126,11 @@ sub handlerSigHup() {
 
 
 
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Determine the server address - this is used for
 # both the address to listen on and the address
 # to connect to for a remote server.
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub getServerAddress($$$) {
     my $bListen     = shift;
     my $sServerAddr = shift;    # defaults
@@ -148,10 +158,10 @@ sub getServerAddress($$$) {
 
 
 
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Save all state data to a file except for current
 # room occupants.
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub saveState() {
     open(STATE, ">" . C_StatePath) || return infoLog('Unable to save state (need write access to ' . C_StatePath . ')');
     print STATE DSPS_User::freezeState() . "\n";
@@ -163,9 +173,9 @@ sub saveState() {
 
 
 
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Read state data from a file
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub restoreState() {
     open(STATE, C_StatePath) || return infoLog('No saved state to restore (' . C_StatePath . ')');
     my $sUsers = <STATE>;
@@ -183,10 +193,10 @@ sub restoreState() {
 
 
 
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Send an email - $sMessage should start with the
 # Subject line, then a blank line, then the message
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub sendEmail($$$) {
     my $sTo = shift;
     my $sCc = shift;
@@ -240,10 +250,10 @@ sub sendEmail($$$) {
 
 
 
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Execute an RT command potentially on a remote
 # server.
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub rtCommand($;$) {
     my $sCommand = shift;
     my $sInput = shift || '';
@@ -274,9 +284,9 @@ sub rtCommand($;$) {
 
 
 
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Create a new RT ticket via rtCommand()
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub rtCreateTicket($$$) {
     my $sMessage = shift;
     my $sQueue = shift;
@@ -295,9 +305,9 @@ sub rtCreateTicket($$$) {
 
 
 
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Substitute in all user macros
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub replaceUserMacros($$) {
     my $iSender = shift;
     my $sMessage = shift;
@@ -327,9 +337,9 @@ sub replaceUserMacros($$) {
 
 
 
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Clean up a message before it goes out
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub messagePostFixUp($) {
     my $sMessage = shift;
     my $sCompressedMessage = $sMessage;
@@ -363,17 +373,10 @@ sub messagePostFixUp($) {
 
 
 
-# these one-liners exists as a function so they can be called by some of the included modules
-# essentially this avoids a circular include dependency
-sub getRecoveryRegex() { return $g_hConfigOptions{recovery_regex}; }
-sub getShowNonHuman() { return $g_hConfigOptions{show_nonhuman}; }
-sub getAdminEmail() { return $g_hConfigOptions{admin_email}; }
-sub getRTLink() { return $g_hConfigOptions{rt_link}; }
-sub getUsersEscalationsEmails($) { return DSPS_Escalation::getUsersEscalationsEmails(shift); }
-sub getLogRoomsTo() { return $g_hConfigOptions{log_rooms_to}; }
 
-
-
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Search the help list for a particular topic
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub helpSearch($) {
     my $sTopic = shift;
     my @aResults;
@@ -389,6 +392,15 @@ sub helpSearch($) {
 
 
 
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Send an SMS page to a phone number
+# Handles:
+#   - max length trimming
+#   - adding a random character to dedupe
+#   - forking into bg for send - for instant return
+#   - interpolating config into gateway's API
+#   - logging result of the gateway API hit
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub sendSmsPage($$) {
     my ($iCellNumber, $sMessage) = @_;
 
@@ -473,6 +485,14 @@ sub sendSmsPage($$) {
 
 
 
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Process commands a user sends to the system
+# Handles:
+#   - checking permissions - that user vs that cmd
+#   - doing the action
+#   - returning result to the user
+# Returns bool of whether or not a cmd was handled
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub handlePagingCommands($$) {
     my ($iSender, $sMessage) = @_;
     my $sCommand; 
@@ -1136,6 +1156,19 @@ sub handlePagingCommands($$) {
 }
 
 
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Scan a message to see if anyone (people or
+# groups) needs to be pulled into the room and if
+# so pull them in.
+# If an escalation tag is found, in addition to
+# pulling the current on call person in, an
+# escalation is primed (setup).  That can also
+# lead to notification emails being sent from
+# here if configured.
+# Returns bool of whether or not the room makeup
+# changed.
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub processMentions($$$;$);
 sub processMentions($$$;$) {
     my $sSender             = shift;
@@ -1188,7 +1221,7 @@ sub processMentions($$$;$) {
     }
 
     # look for escalation mentions
-    # do escalations last in case other names were also mentioned that will qualify the escalation's min_to_abort criteria
+    # do escalations last in case other names were also mentioned that will satisfy the escalation's min_to_abort criteria
     foreach my $sEscName (keys %g_hEscalations) {
 
         if ($sScanMessage =~ /$sAt($sEscName)\b/i) {
@@ -1202,6 +1235,19 @@ sub processMentions($$$;$) {
 
 
 
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Send a message that came from a user to all
+# room occupants.
+# Handles:
+#   - ambiguous name warnings
+#   - implementation of broadcast mode logic (who can talk)
+#   - sending the audience update if necessary
+#   - updating the RT ticket if configured
+#   - prefixing with '+' if an escalation
+#   - prefixing with user's name if they're human
+#   - sending a user's Auto Reply if configured
+#   - updating some room metadata that has to be done here
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub sendUserMessageToRoom($$$);
 sub sendUserMessageToRoom($$$) {
     my ($iSenderPhone, $sMessage, $bsUpdateAudience) = @_;
@@ -1304,6 +1350,14 @@ sub sendUserMessageToRoom($$$) {
 
 
 
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Send a message that DSPS originates to all
+# room occupants.
+# Handles:
+#   - theming the message - t()
+#   - sending to just a single user if no room
+#   - silence modifier logic
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub sendSystemMessageToRoom($$$) {
     my ($iSender, $sMessage, $iSilenceModifier) = @_;
     my $iRoom = DSPS_Room::findUsersRoom($iSender);
@@ -1336,6 +1390,27 @@ sub sendSystemMessageToRoom($$$) {
 }
 
 
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Ideally we get all messages sent to us via HTTP.
+# But if we're accepting messages via email as
+# part of our gateway interface (i.e. things people
+# type into their phones), then those emails are
+# likely to all be submitted to us via the same
+# paging user that gets hardcoded in /etc/aliases.
+# We need a way to tell who the actual paging user
+# (sender) should be.  That's called overriding the
+# user.  We have one paging user that submitted the
+# email to us and we override it with the value of
+# a user specified somewhere in the message.  If
+# the admin has defined who the override_user is
+# (that's the initial one, submitting the email)
+# and an override_regex (which is how to pick the
+# new user out of the message), then we can scan
+# the message for that regex and make the
+# substitution.  That's what's happening here.
+# Returns the new user, if all conditions match.
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub checkUserOverride($$) {
     my $sSender = shift;
     my $sMessage = shift;
@@ -1363,12 +1438,23 @@ sub checkUserOverride($$) {
 
 
 
-#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# processPageEngine()
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Main work of processing a page.
-# If $sSender is entirely numeric it's the caller ID
-# of the sender's phone.  Otherwise it's a username
-# passed on the commandline.
+# Handles:
+#   - checking for commands from the user
+#   - interpolating in user macros
+#   - checking all filters
+#   - checking for escalation disarming
+#   - maintenance mode logic
+#   - auto_include logic for system users
+#   - auto resend logic
+#   - initiation of broadcast mode
+#   - message clean up and standardization
+#   - some room metadata updating
+# Note $sSender at this point can be numeric (caller
+# ID) or a username from the CLI.
+# Returns how the message was handled.
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub processPageEngine($$) {
     my ($sSender, $sOrigMessage) = @_;
     my $iSender;
@@ -1465,6 +1551,11 @@ sub processPageEngine($$) {
 
 
 
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Make sure the sender is a valid paging user
+# and standardize the input (caller ID or user
+# name) to caller ID.
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub verifySendingUser($) {
     my $sSender = shift;
 
@@ -1489,6 +1580,24 @@ sub verifySendingUser($) {
 
 
 
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# When the main daemon kicks off, immediately
+# after backgrounding, this is it's main() start
+# point.
+# Handles:
+#    - setting up the main listening socket
+#    - looping through incoming socket connections,
+#      sleeping at most 10 seconds between each
+#    - socket timeouts / exception catching
+#    - processing each of the 3 types of requests:
+#          - regular message/command submission
+#          - fire fast submission (gets immediate reply)
+#          - print request for escalatino on call schedule
+#    - room health checks - delete expired ones
+#    - user health checks - delete expired vacations
+#    - escalation check - fire off ones that are ready
+# Never returns.
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub daemonMain() {
     eval {
         my ($sServerAddr, $iServerPort) = getServerAddress(1, '0.0.0.0', 2176);
@@ -1513,7 +1622,7 @@ sub daemonMain() {
         # daemon main loop
         while (1) {
 
-            # sleep at most 30 seconds waiting for a socket connection
+            # sleep at most 10 seconds waiting for a socket connection
             my ($rtReadSet) = IO::Select->select($rtReadHandles, undef, undef, 10);
 
             # loop through sockets that are ready to be read.  since we only keep our listening one open
@@ -1614,6 +1723,10 @@ sub daemonMain() {
 
 
 
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Check to see if the daemon is already running
+# Returns PID or 0.
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub daemonAlreadyRunning() {
     my $iPID = shift || 0;
     my $bDaemonLives = 0;
@@ -1634,17 +1747,26 @@ sub daemonAlreadyRunning() {
 
 
 
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Print CLI syntax help
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub showUsage() {
-
-    #print "$0 daemon\n\tStart the paging daemon in the background\n\n$0 submit [user] [message]\n\tSubmit a message from a paging user\n" .
-    #    "\n$0 submitemail [user] [message]\n\tSubmit an email from a user - the body will be used as the message\n" .
-    #    "\n With both forms of submit, as an alternative the message can be piped into stdin.\n";;
     print "$0 [-d | -s | -e | -p escalation] [-c config_file] [-u user] [message]\n   -d  (re)start the paging daemon in the background\n   -s  submit a message (pipe to stdin or via CLI)\n";
     print "   -e  submit an email (pipe to stdin or via CLI), i.e. ignore headers\n   -u  specify the submitting paging user\n   -p  print current oncall schedule for a given escalation\n";
     print "   -f  fast message submission to the daemon; don't wait for processing\n   -c  specify a config filename (default /usr/local/bin/dsps3/config.dsps)\n";
 }
 
 
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# DSPS is both a server daemon and client.  The
+# CLI is the client and it can be used to submit
+# messaegs/commands to the server.  This function
+# is used by the client to make a request of the 
+# server via its HTTP API.
+# Returns the text given back by the server or
+# an error message if it can't connect.
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub hitDspsApi($$) {
     my $sCommand = shift;
     my $rVars = shift;
@@ -1669,6 +1791,17 @@ sub hitDspsApi($$) {
 }
 
 
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# This is the main logic for the client part of
+# of DSPS (the companion to daemonMain()).
+# Handles:
+#   - processing CLI arguments
+#   - submitting messages/commands to the server
+#   - performing the startup config syntax check
+#   - daemon startup if requested
+#   - email header stripping for email submissions
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub clientStartup() {
     my $bCmdDaemon      = 0;
     my $bCmdSubmit      = 0;
@@ -1817,7 +1950,12 @@ sub clientStartup() {
     showUsage();
 }
 
-#-#-#  M A I N  #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#  M A I N  
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 
 clientStartup();
+
 
