@@ -60,6 +60,11 @@ sub configSyntaxValid() {
             print STDERR infoLog('user ' . $g_hUsers{$iPhone}->{name} . "'s \"name\" isn't contained in their \"regex\"; this is an internal DSPS requirement");
             $bValid = 0;
         }
+
+        if ($g_hUsers{$iPhone}->{regex} =~ /^\s*$/) {
+            print STDERR infoLog('user ' . $g_hUsers{$iPhone}->{name} . " ($iPhone) has a blank regex");
+            $bValid = 0;
+        }
     }
 
     # per escalation checks
