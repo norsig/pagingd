@@ -272,6 +272,11 @@ sub checkEscalationTimes() {
             next;
         }
 
+        unless ($g_hRooms{$iRoom}->{escalation_orig_sender}) {
+            infoLog("ERROR: escalation timer expired for room $iRoom but we don't know the original sender");
+            next;
+        }
+
         # our initial timer was internaly set to 60 seconds less than the admin configured it.  so at this point
         # we have a minute left before the real timer expires.  now we're going to re-send the initial page to give
         # the on call person a second attempt *before* we actually escalate.  we distinguish between "timer expired
