@@ -126,10 +126,10 @@ sub combinePeoplesRooms($$) {
                 roomEnsureOccupant($iDestinationRoom, $iUserInSourceRoom);
             }
 
-            $g_hRooms{$iDestinationRoom}->{maintenance} = $g_hRooms{$iDestinationRoom}->{maintenance} || $g_hRooms{$iSourceRoom}->{maintenance};
-            $g_hRooms{$iDestinationRoom}->{broadcast_speaker} = $g_hRooms{$iSourceRoom}->{broadcast_speaker};
-            $g_hRooms{$iDestinationRoom}->{ticket_number} = $g_hRooms{$iSourceRoom}->{ticket_number};
-            $g_hRooms{$iDestinationRoom}->{escalation_orig_sender} = $g_hRooms{$iSourceRoom}->{escalation_orig_sender};
+            $g_hRooms{$iDestinationRoom}->{maintenance} = $g_hRooms{$iSourceRoom}->{maintenance} unless $g_hRooms{$iDestinationRoom}->{maintenance};
+            $g_hRooms{$iDestinationRoom}->{broadcast_speaker} = $g_hRooms{$iSourceRoom}->{broadcast_speaker} unless $g_hRooms{$iDestinationRoom}->{broadcast_speaker};
+            $g_hRooms{$iDestinationRoom}->{ticket_number} = $g_hRooms{$iSourceRoom}->{ticket_number} unless $g_hRooms{$iDestinationRoom}->{ticket_number};
+            $g_hRooms{$iDestinationRoom}->{escalation_orig_sender} = $g_hRooms{$iSourceRoom}->{escalation_orig_sender} unless $g_hRooms{$iDestinationRoom}->{escalation_orig_sender};
 
             destroyRoom($iSourceRoom);
         }
@@ -328,6 +328,7 @@ sub logRoom($) {
         print LOG roomStatus($iRoom, 0, 1, 1) . "\n";
 
         foreach my $sHistory (@{$g_hRooms{$iRoom}->{history}}) {
+            $sHistory =~ s/\n/; /g;
             print LOG $sHistory . "\n";
         }
 
