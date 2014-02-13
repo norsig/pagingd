@@ -15,7 +15,8 @@ our @EXPORT = ('%g_hConfigOptions');
 
 # set defaults
 our %g_hConfigOptions = ('require_at' => 0);;
-our $sConfigPath = '/usr/local/bin/dsps3';
+our $sConfigPath = '/usr/local/bin/dsps3/config';
+
 my @aValueDirectives = ('default_maint', 'gateway_url', 'gateway_params', 'fallback_email', 'recovery_regex', 'dsps_server', 'smtp_server', 'server_listen', 'smtp_from', 'admin_email', 
                         'rt_connection', 'override_user', 'override_regex', 'rt_link', 'log_rooms_to', 'nagios_problem_regex', 'nagios_any_regex');
 my @aBoolDirectives = ('show_nonhuman', 'require_at');
@@ -443,7 +444,7 @@ sub writeConfig() {
         # s/^\s*(.*)\s*/$1/;
         s/\s*#.*$//;
 
-        if (/^(\s*)[teso]\s*:/i) {
+        if (/^(\s*)([teso]|timer|escalate_to|alert_email|swap_email|cancel_msg|options|schedule|sched)\s*:/i) {
             $sIndent = $1;
         }
         else {
@@ -456,7 +457,7 @@ sub writeConfig() {
             $bFoundSchedule = 0;
         }
 
-        if (($sSection eq 'escalation') && /^\s*s\s*:/i && defined($g_hEscalations{$sInfo})) {
+        if (($sSection eq 'escalation') && /^\s*(s|sched|schedule)\s*:/i && defined($g_hEscalations{$sInfo})) {
 
             unless ($bFoundSchedule) {
                 debugLog(D_config, "rewriting schedule for escalation $sInfo");
@@ -475,6 +476,10 @@ sub writeConfig() {
 
     close(CFG);
     close(NEW);
+
+    unlink("$sConfigFileName.bck");
+    rename("$sConfigFileName", "$sConfigFileName.bck");
+    rename("$sConfigFileName.new", "$sConfigFileName");
 
     debugLog(D_config, "saved new configuration file $sConfigFileName");
 }
