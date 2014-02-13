@@ -64,7 +64,6 @@ use strict;
 #-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 
 our $g_iDebugTopics = 0;
-#our $g_iDebugTopics = D_all & ~D_config & ~D_users & ~D_state;
 
 # drop root privs to become 'nobody'
 $< = $> = 65534 unless ($< == 65534);
@@ -204,6 +203,7 @@ sub sendEmail($$$) {
     my $sFrom = $g_hConfigOptions{smtp_from} ? $g_hConfigOptions{smtp_from} : 'noreply@dsps';
     my $sHeader = "From: $sFrom\n";
 
+    return if (TEST_RUN > 1);
     return infoLog("ERROR:  cannot send mail without 'smtp_server' set in config file") unless $g_hConfigOptions{smtp_server};
     return infoLog("WARNING: cannot send mail without a recipient") unless ($sTo || $sCc);
 
