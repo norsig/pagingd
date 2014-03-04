@@ -1837,7 +1837,7 @@ sub hitDspsApi($$) {
             return "Unable to connect to paging daemon.  Is the daemon running?\n";
         }
         else {
-            return "Error: " . $tRequest->content() . ").\n";
+            return "Error: " . $tRequest->content();
         }
     }
 }
