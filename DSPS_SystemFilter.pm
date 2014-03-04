@@ -62,8 +62,10 @@ sub blockedByFilter($$) {
 
     # check all regex filters
     foreach my $iRegexFilterID (keys %rFilterRegex) {
+        my $sThisRegex = $rFilterRegex{$iRegexFilterID}->{regex};
+        $sThisRegex =~ s/(\\s| )/(\\s|)/g;
         if (($rFilterRegex{$iRegexFilterID}->{till} >= $iNow) &&
-            ($sMessage =~ /$rFilterRegex{$iRegexFilterID}->{regex}/i)) {
+            ($sMessage =~ /$sThisRegex/i)) {
             infoLog("message matched Regex filter (" . $rFilterRegex{$iRegexFilterID}->{regex} . ")");
             return 1;
         }
@@ -122,7 +124,7 @@ sub newRegexFilter($$) {
         $iLastID++;
     }
 
-    debugLog(D_filters, (defined $rFilterRegex{$iLastID} ? 'updated' : 'added') . " RegexFilter $sRegex (id $iLastID)");
+    debugLog(D_filters, (defined $rFilterRegex{$iLastID} ? 'updated' : 'added') . " RegexFilter /$sRegex/ (id $iLastID)");
     $rFilterRegex{$iLastID} = { regex => $sRegex, till => $iTill }; 
 }
 
