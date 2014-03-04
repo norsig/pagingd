@@ -39,6 +39,7 @@ use IO::Select;
 use Getopt::Long;
 use CGI qw();
 use Net::SMTP;
+use POSIX qw(strftime);
 use LWP 5.64;
 use lib "/usr/local/bin/dsps3";
 use DSPS_User;
@@ -63,7 +64,8 @@ use strict;
 # You can also use 0 or D_all.
 #-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 
-our $g_iDebugTopics = 0;
+our $g_iDebugTopics = D_all & ~D_users & ~D_state & ~D_configRead;
+#our $g_iDebugTopics = 0;
 
 # drop root privs to become 'nobody'
 $< = $> = 65534 unless ($< == 65534);
@@ -80,6 +82,8 @@ $SIG{CHLD} = 'IGNORE';
 # globals
 my $g_tListenerSocket;         
 my $g_sConfigFilename = '';
+my $g_iTodayDate = 0;
+my $g_iNumPagesToday = 0;
 
 # these one-liners exist as functions so they can be called by some of the included modules
 # essentially these avoid circular include dependencies
@@ -100,6 +104,7 @@ sub handlerDaemonExit() {
     $g_tListenerSocket->close();
     unlink(C_PIDPath);
     saveState();
+    checkpointMetrics(1);
     infoLog('daemon exiting on signal');
     closelog();  # syslog
     exit(0);
@@ -120,6 +125,24 @@ sub handlerSigHup() {
         $g_tListenerSocket->close();
         unlink(C_PIDPath);
         exit(1);
+    }
+}
+
+
+sub checkpointMetrics() {
+    my $bForce = shift || 0;
+    my $iStartingDate = $g_iTodayDate;
+    $g_iTodayDate = strftime("%Y%m%d", localtime);
+
+    if ($iStartingDate) {
+        if ($bForce || ($g_iTodayDate != $iStartingDate)) {
+            open(LOG, ">>" . C_MetricLog) or return(infoLog('Unable to write to ' . C_MetricLog));
+            print LOG "$iStartingDate: $g_iNumPagesToday\n";
+            close(LOG);
+        
+            # reset for new day
+            $g_iNumPagesToday = 0;   
+        }
     }
 }
 
@@ -437,6 +460,9 @@ sub sendSmsPage($$) {
             substr($sMessage, 159, 1) = random_string('s');
         }
     }
+
+    # update global metrics
+    $g_iNumPagesToday++;
 
     # fork a child to send the page.  that way pages to a large recipient list can become
     # a large number of children and go out near simultaneously
@@ -1295,7 +1321,7 @@ sub sendUserMessageToRoom($$$) {
 
     # determine the current audience
     # bsUpdateAudience can be false, true, or an addition message to prefix the audience with
-    my $sAudience = t(((length($bsUpdateAudience) > 1) ? $bsUpdateAudience . ' ' : '') . S_AudienceUpdate . ' ' . DSPS_Room::roomStatus($iRoom) .
+    my $sAudience = t(((length($bsUpdateAudience) > 1) ? $bsUpdateAudience . ' ' : ($g_hRooms{$iRoom}->{maintenance} ? 'MAINT:' : '')) . S_AudienceUpdate . ' ' . DSPS_Room::roomStatus($iRoom) .
                         ($g_hRooms{$iRoom}->{ticket_number} ? ('. Tkt: ' . $g_hRooms{$iRoom}->{ticket_number}) : ''));
 
     # prepend the sender
@@ -1622,6 +1648,8 @@ sub daemonMain() {
         # daemon main loop
         while (1) {
 
+            checkpointMetrics();
+
             # sleep at most 10 seconds waiting for a socket connection
             my ($rtReadSet) = IO::Select->select($rtReadHandles, undef, undef, 10);
 
@@ -1653,47 +1681,71 @@ sub daemonMain() {
 
                 next unless ((defined $oRequest) && $oRequest);
 
-                eval {
-                    infoLog($oRequest->uri->path . ' request from ' . $oConnection->peerhost() . ':' . $oConnection->peerport(). " specifying: " . join(', ', sort keys %{$rVars}));
+                # verify http auth, if configured
+                my $bAuthOk = 1;
+                if (defined($g_hConfigOptions{http_auth})) {
+                    $bAuthOk = 0;
 
-                    # look for submit requests - the majority of paging commands
-                    if ($oRequest->uri->path eq '/submit') {
-                        if (defined($rVars->{message}) && defined($rVars->{sender})) {
+                    if (defined($rVars->{auth})) {
+                        while ($g_hConfigOptions{http_auth} =~ /([A-Z0-9-_+]+)/i) {
+                            my $sKey = $1;
 
-                            if (defined($rVars->{fire_fast}) && ($rVars->{fire_fast} == 1)) {
-
-                                # in fire_fast mode we send the client the ack immediately and let them go on their way while we do the work
-                                # FWIW, most of what we do is prety fast anyway.  the real advantage is if we're creating an RT ticket on a
-                                # remote server that might make us slow to respond.
-                                $oConnection->send_response(HTTP::Response->new(200, 'OK', HTTP::Headers->new(), "Message submitted\n"));
-                                processPageEngine($rVars->{sender}, $rVars->{message});
+                            if ($sKey eq $rVars->{auth}) {
+                                $bAuthOk = $sKey;
+                                last;
                             }
-                            else {
-                                # main engine to process the incoming page and respond
-                                my $sStatus = processPageEngine($rVars->{sender}, $rVars->{message});
-
-                                # send a response back to the dsps client
-                                $oConnection->send_response(HTTP::Response->new(200, 'OK', HTTP::Headers->new(), "$sStatus\n"));
-                            }
-                        }
-                        else {
-                            infoLog("ERROR:  socket connection that didn't specify message and sender; ignoring");
-                            $oConnection->send_response(HTTP::Response->new(400, 'FAIL', HTTP::Headers->new(), "Submission is invalid.\n"));
                         }
                     }
-                    # versus print requests specifically from the client CLI
-                    elsif ($oRequest->uri->path eq '/print') {
-                        if (defined($rVars->{escalation})) {
+                }
 
-                            # has the client asked for the on call schedule of a valid escalation?
-                            if (my $sKey = caselessHashLookup($rVars->{escalation}, %g_hEscalations)) {
-                                $oConnection->send_response(HTTP::Response->new(201, 'OK', HTTP::Headers->new(), DSPS_Escalation::getFullOncallSchedule($sKey)));
+                eval {
+                    infoLog(($bAuthOk eq 1 ? "" : $bAuthOk ? "[Auth $bAuthOk] " : "[Auth FAILED] ") . $oRequest->uri->path . ' request from ' . 
+                        $oConnection->peerhost() . ':' . $oConnection->peerport(). " specifying: " . join(', ', sort keys %{$rVars}));
+
+                    if ($bAuthOk) {
+
+                        # look for submit requests - the majority of paging commands
+                        if ($oRequest->uri->path eq '/submit') {
+                            if (defined($rVars->{message}) && defined($rVars->{sender})) {
+
+                                if (defined($rVars->{fire_fast}) && ($rVars->{fire_fast} == 1)) {
+
+                                    # in fire_fast mode we send the client the ack immediately and let them go on their way while we do the work
+                                    # FWIW, most of what we do is prety fast anyway.  the real advantage is if we're creating an RT ticket on a
+                                    # remote server that might make us slow to respond.
+                                    $oConnection->send_response(HTTP::Response->new(200, 'OK', HTTP::Headers->new(), "Message submitted\n"));
+                                    processPageEngine($rVars->{sender}, $rVars->{message});
+                                }
+                                else {
+                                    # main engine to process the incoming page and respond
+                                    my $sStatus = processPageEngine($rVars->{sender}, $rVars->{message});
+
+                                    # send a response back to the dsps client
+                                    $oConnection->send_response(HTTP::Response->new(200, 'OK', HTTP::Headers->new(), "$sStatus\n"));
+                                }
                             }
                             else {
-                                $oConnection->send_response(HTTP::Response->new(201, 'OK', HTTP::Headers->new(), 
-                                    "There is no currently configured escalation with that name.\n"));
-                            } 
+                                infoLog("ERROR:  socket connection that didn't specify message and sender; ignoring");
+                                $oConnection->send_response(HTTP::Response->new(400, 'FAIL', HTTP::Headers->new(), "Submission is invalid.\n"));
+                            }
                         }
+                        # versus print requests specifically from the client CLI
+                        elsif ($oRequest->uri->path eq '/print') {
+                            if (defined($rVars->{escalation})) {
+
+                                # has the client asked for the on call schedule of a valid escalation?
+                                if (my $sKey = caselessHashLookup($rVars->{escalation}, %g_hEscalations)) {
+                                    $oConnection->send_response(HTTP::Response->new(201, 'OK', HTTP::Headers->new(), DSPS_Escalation::getFullOncallSchedule($sKey)));
+                                }
+                                else {
+                                    $oConnection->send_response(HTTP::Response->new(201, 'OK', HTTP::Headers->new(), 
+                                        "There is no currently configured escalation with that name.\n"));
+                                } 
+                            }
+                        }
+                    }
+                    else {
+                        $oConnection->send_response(HTTP::Response->new(403, 'FAIL', HTTP::Headers->new(), "Invalid authentication.\n"));
                     }
 
                     $oConnection->close();
@@ -1785,8 +1837,23 @@ sub hitDspsApi($$) {
             return "Unable to connect to paging daemon.  Is the daemon running?\n";
         }
         else {
-            return "Error sending message (HTTP response " . $tRequest->code() . ").\n";
+            return "Error: " . $tRequest->content() . ").\n";
         }
+    }
+}
+
+
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Read in the current config, validate the syntax
+# and die if it's invalid.
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+sub readValidConfigOrDie($) {
+    my $sConfigFile = shift;
+
+    unless (DSPS_Config::readConfig($sConfigFile) && DSPS_Config::configSyntaxValid()) {
+        print infoLog("Aborting startup due to configuration errors.");
+        exit(1);
     }
 }
 
@@ -1822,26 +1889,29 @@ sub clientStartup() {
         'print=s'   => \$sEscalation
     );
 
-    my $sMessage = $ARGV[0] || '';
-    my $sBogus   = $ARGV[1] || '';
+    my $sMessage    = $ARGV[0] || '';
+    my $sBogus      = $ARGV[1] || '';
+    my $bValidStdIn = 0;
 
     if ($sBogus) {
         print infoLog("Too many parameters specified.  Did you forget quotes around your message text?");
         exit(1);
     }
 
-    if ((!-t STDIN) && $sMessage) {
-        print infoLog("You can't specify the message text on both stdin and the commandline.");
-        exit(1);
+    # look for a message on STDIN
+    if (!-t STDIN) {
+        my @aStdin = <STDIN>;
+
+        if ($#aStdin > -1) {
+            print infoLog("Message specified on commandline AND piped in; concatting") if $sMessage;
+            $sMessage = join('', @aStdin) . " $sMessage";
+        }
     }
 
     if ($bCmdSubmit || $bCmdSubmitEmail) {
-        unless (DSPS_Config::readConfig($g_sConfigFilename) && DSPS_Config::configSyntaxValid()) {
-            print infoLog("Aborting startup due to configuration errors.");
-            exit(1);
-        }
+        readValidConfigOrDie($g_sConfigFilename);
 
-        if (-t STDIN && !$sMessage) {
+        if (!$sMessage) {
             print infoLog("With submit you have to specify a message to send.");
             exit(1);
         }
@@ -1854,12 +1924,6 @@ sub clientStartup() {
         unless ($sUser) {
             print infoLog("Messages have to be submitted from a specific paging using (-u).");
             exit(1);
-        }
-
-        # read from stdin unless we got the message on the commandline
-        unless ($sMessage) {
-            my @aStdin = <STDIN>;
-            $sMessage = join('', @aStdin);
         }
 
         # if the message contains an embedded sender that we're configured to recognize, switch to it
@@ -1900,13 +1964,27 @@ sub clientStartup() {
         }
 
         # submit the message to the daemon
-        print hitDspsApi('submit', [ sender => $sUser, message => $sMessage, fire_fast => $bFireFast ]);
+        if (defined($g_hConfigOptions{http_auth}) && ($g_hConfigOptions{http_auth} =~ /([A-Z0-9-_+]+)/i)) {
+            my $sKey = $1;
+            print hitDspsApi('submit', [ sender => $sUser, message => $sMessage, auth => $sKey, fire_fast => $bFireFast ]);
+        }
+        else {
+            print hitDspsApi('submit', [ sender => $sUser, message => $sMessage, fire_fast => $bFireFast ]);
+        }
         exit(0);
     }
 
     # print oncall schedule for an escalation
     if ($sEscalation) {
-        print hitDspsApi('print', [ escalation => $sEscalation ]);
+        readValidConfigOrDie($g_sConfigFilename);
+        
+        if (defined($g_hConfigOptions{http_auth}) && ($g_hConfigOptions{http_auth} =~ /([A-Z0-9-_+]+)/i)) {
+            my $sKey = $1;
+            print hitDspsApi('print', [ escalation => $sEscalation, auth => $sKey ]);
+        }
+        else {
+            print hitDspsApi('print', [ escalation => $sEscalation ]);
+        }
         exit(0);
     }
 
@@ -1924,10 +2002,7 @@ sub clientStartup() {
             }
         }
 
-        unless (DSPS_Config::readConfig($g_sConfigFilename) && DSPS_Config::configSyntaxValid()) {
-            print infoLog("Aborting startup due to configuration errors.");
-            exit(1);
-        }
+        readValidConfigOrDie($g_sConfigFilename);
 
         # print(($bRestart ? "Restarting" : "Starting") . " daemon.\n");
         my $tDaemon = Proc::Daemon->new(work_dir => '/tmp', pid_file => C_PIDPath);
@@ -1938,11 +2013,7 @@ sub clientStartup() {
     }
 
     if ($bCmdRunTests) {
-        unless (DSPS_Config::readConfig("config.test") && DSPS_Config::configSyntaxValid()) {
-            print infoLog("Aborting startup due to configuration errors or missing test config file ('config.test').");
-            exit(1);
-        }
-
+        readValidConfigOrDie('config.test');
         DSPS_Test::startTests();
         exit(0);
     }

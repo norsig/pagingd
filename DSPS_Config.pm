@@ -18,7 +18,7 @@ our %g_hConfigOptions = ('require_at' => 0);;
 our $sConfigPath = '/usr/local/bin/dsps3/config';
 
 my @aValueDirectives = ('default_maint', 'gateway_url', 'gateway_params', 'fallback_email', 'recovery_regex', 'dsps_server', 'smtp_server', 'server_listen', 'smtp_from', 'admin_email', 
-                        'rt_connection', 'override_user', 'override_regex', 'rt_link', 'log_rooms_to', 'nagios_problem_regex', 'nagios_any_regex');
+                        'rt_connection', 'override_user', 'override_regex', 'rt_link', 'log_rooms_to', 'nagios_problem_regex', 'nagios_any_regex', 'http_auth');
 my @aBoolDirectives = ('show_nonhuman', 'require_at');
 my %hSeenAliases;
 
@@ -272,6 +272,21 @@ sub readConfig(;$) {
             next;
         }
 
+        # alert_subject
+        if (/\b(?:as|alert_subject)\s*:\s*(.+)/i) {
+            my $sValue = $1;
+
+            if ($sSection eq 'escalation') {
+                $rStruct->{alert_subject} = $sValue;
+            }
+            else {
+                print infoLog("configuration error - alert subject outside of escalation: as:$sValue $sLineNum");
+                ++$iErrors;
+            }
+            next;
+        }
+
+
         # alert email
         if (/\b(?:ae|alert_email)\s*:\s*(.+)/i) {
             my $sValue = $1;
@@ -366,7 +381,7 @@ sub readConfig(;$) {
                     my %hSchedule = %{$rStruct->{schedule}}; 
                     $hSchedule{$sDate} = $sSched;
                     $rStruct->{schedule} = \%hSchedule;
-                    debugLog(D_config, "adding " . $rStruct->{name} . " $sDate schedule as $sSched (now " . keys(%hSchedule) . " entries) $sLineNum");
+                    debugLog(D_configRead, "adding " . $rStruct->{name} . " $sDate schedule as $sSched (now " . keys(%hSchedule) . " entries) $sLineNum");
                 }
             }
             else {
@@ -444,7 +459,7 @@ sub writeConfig() {
         # s/^\s*(.*)\s*/$1/;
         s/\s*#.*$//;
 
-        if (/^(\s*)([teso]|timer|escalate_to|alert_email|swap_email|cancel_msg|options|schedule|sched)\s*:/i) {
+        if (/^(\s*)([teso]|timer|escalate_to|alert_email|as|ae|alert_subject|swap_email|cancel_msg|options|schedule|sched)\s*:/i) {
             $sIndent = $1;
         }
         else {
@@ -460,7 +475,7 @@ sub writeConfig() {
         if (($sSection eq 'escalation') && /^\s*(s|sched|schedule)\s*:/i && defined($g_hEscalations{$sInfo})) {
 
             unless ($bFoundSchedule) {
-                debugLog(D_config, "rewriting schedule for escalation $sInfo");
+                debugLog(D_configWrite, "rewriting schedule for escalation $sInfo");
                 my %hSchedule = %{$g_hEscalations{$sInfo}->{schedule}};
                 foreach my $sDate (sort keys %hSchedule) {
                     print NEW "${sIndent}s:$sDate " . $hSchedule{$sDate} . "\n";
@@ -481,7 +496,7 @@ sub writeConfig() {
     rename("$sConfigFileName", "$sConfigFileName.bck");
     rename("$sConfigFileName.new", "$sConfigFileName");
 
-    debugLog(D_config, "saved new configuration file $sConfigFileName");
+    debugLog(D_configWrite, "saved new configuration file $sConfigFileName");
 }
 
 1;
