@@ -27,6 +27,8 @@ sub createEscalation {
         min_to_abort   => 2,
         cancel_msg     => '',
         schedule       => {},
+        alert_subject  => '',
+        alert_email    => '',
     };
 
     $g_hEscalations{ $_[0] } = $rhEsc;
@@ -88,8 +90,9 @@ sub primeEscalation($$$) {
     if ($g_hEscalations{$sEscName}->{alert_email}) {
         my $sRTSuffix = "\n\n----\nThis event is being tracked in RT ticket #" . $g_hRooms{$iRoom}->{ticket_number} . "\n" .
             (main::getRTLink() ? main::getRTLink()  . $g_hRooms{$iRoom}->{ticket_number} : '');
+        my $sSubject = $g_hEscalations{$sEscName}->{alert_subject} ? $g_hEscalations{$sEscName}->{alert_subject} : 'DSPS Escalation!';
 
-        main::sendEmail($g_hEscalations{$sEscName}->{alert_email}, '', sv(E_EscalationFire1, $sEscName, $sMessage) .
+        main::sendEmail($g_hEscalations{$sEscName}->{alert_email}, '', sv(E_EscalationPrep3, $sSubject, $sEscName, $sMessage) .
             ($g_hEscalations{$sEscName}->{rt_queue} ? $sRTSuffix : ''));
     }
 
@@ -108,6 +111,7 @@ sub getScheduledOncallPerson($;$) {
     return '' unless defined $g_hEscalations{$sEscName}->{schedule};
 
     my %hSchedule = %{ $g_hEscalations{$sEscName}->{schedule} };
+
     my ( $iMinute, $iHour, $iDay, $iMonth, $iYear ) = (localtime)[ 1 .. 5 ];
     my $iToday = sprintf( "%d%02d%02d", $iYear + 1900, $iMonth + 1, $iDay );
 
@@ -299,6 +303,8 @@ sub checkEscalationTimes() {
         main::processMentions($g_hRooms{$iRoom}->{escalation_orig_sender}, $g_hRooms{$iRoom}->{escalation_to}, $g_hRooms{$iRoom}->{escalation_to});
         
         my $sOrigSender = $g_hRooms{$iRoom}->{escalation_orig_sender};
+        my $sOrigEscName = $g_hRooms{$iRoom}->{escalation_name};
+        my $sOrigTo = $g_hRooms{$iRoom}->{escalation_to};
         
         # clear the escalation so it doesn't fire again
         # we do this before sendUserMessageToRoom() so that the sending function will know there's no more
@@ -310,6 +316,17 @@ sub checkEscalationTimes() {
 
         # send out the pages
         main::sendUserMessageToRoom($sOrigSender, $sLastMessage, 'ESCALATED:');
+
+        # send out a second email if configured
+        if ($g_hEscalations{$sOrigEscName}->{alert_email}) {
+            my $sRTSuffix = "\n\n----\nThis event is being tracked in RT ticket #" . $g_hRooms{$iRoom}->{ticket_number} . "\n" .
+                (main::getRTLink() ? main::getRTLink()  . $g_hRooms{$iRoom}->{ticket_number} : '');
+            my $sSubject = ($g_hEscalations{$sOrigEscName}->{alert_subject} ? $g_hEscalations{$sOrigEscName}->{alert_subject} : 'DSPS Escalation!') . ' - ESCALATED!';
+
+            main::sendEmail($g_hEscalations{$sOrigEscName}->{alert_email}, '', sv(E_EscalationEsc4, $sSubject, $sOrigEscName, $sOrigTo, $sLastMessage) .
+                ($g_hEscalations{$sOrigEscName}->{rt_queue} ? $sRTSuffix : ''));
+
+        }
     }
 }
 
