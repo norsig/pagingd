@@ -160,18 +160,19 @@ sub getServerAddress($$$) {
     my $sOption     = $bListen ? 'server_listen' : 'dsps_server';
 
     if (defined $g_hConfigOptions{$sOption}) {
-        if ($g_hConfigOptions{$sOption} =~ /^(\S+)\s*:\s*(\d+)\s*$/) {
+        if ($g_hConfigOptions{$sOption} =~ /^((?:http(?:s)*:\/\/)*\S+)\s*:\s*(\d+)\s*$/) {
             $sServerAddr = $1;
             $iServerPort = $2;
         }
         elsif ($g_hConfigOptions{$sOption} =~ /^\s*:*\s*(\d+)\s*$/) {
             $iServerPort = $1;
         }
-        elsif ($g_hConfigOptions{$sOption} =~ /:/) {
+        elsif (($g_hConfigOptions{$sOption} =~ /:/) && ($g_hConfigOptions{$sOption} !~ /^\s*http(?:s)*:\/\//i)) {
             infoLog("ERROR:  invalid '$sOption' definition in configuration file; defaulting to $sServerAddr:$iServerPort");
         }
-        else {
+        elsif ($g_hConfigOptions{$sOption} =~ /^((?:http(?:s)*:\/\/)*\S+)\s*$/) {
             $sServerAddr = $1;
+			$iServerPort = 443 if ($sServerAddr =~ /^\s*https:\/\//i);
         }
     }
         
@@ -1824,9 +1825,11 @@ sub hitDspsApi($$) {
     my $rVars = shift;
 
     my ($sServerAddr, $iServerPort) = getServerAddress(0, 'localhost', 2176);
-    $sServerAddr = 'http://' . $sServerAddr unless ($sServerAddr =~ /^http/i);
+    my $bSSL = ($iServerPort == 443) || ($sServerAddr =~ /^https:\/\//i);
+    $sServerAddr = (($bSSL ? 'https' : 'http') . '://' . $sServerAddr) unless ($sServerAddr =~ /^http/i);
 
-    my $tUserAgent = LWP::UserAgent->new();
+    my $tUserAgent = LWP::UserAgent->new(($bSSL ? (ssl_opts => { verify_hostname => 0 }) : ()));
+	$tUserAgent->timeout(4);
     my $tRequest = $tUserAgent->post("$sServerAddr:$iServerPort/$sCommand", $rVars);
 
     if ($tRequest->is_success()) {
