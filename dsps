@@ -57,15 +57,17 @@ use strict;
 
 #-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Debugging is available on a per topic basis.  To include syslog debug detail simply
-# "OR" all the topics you want to see together in $g_iDebugTopics.  For example, to
+# bitwise "OR" all the topics you want to see together in $g_iDebugTopics.  For example, to
 # see information about user issues and room issues you might set:
 # $g_iDebugTopics = D_users | D_rooms;
-# All the D_xxxxx debug constants are listed in DSPS_Debug.pm.
 # You can also use 0 or D_all.
+# To see everything except a particular subset you can use bitwise negation to subtract
+# particular components.  Remember to AND them instead of OR.  For example, for everything
+# except state data:
+# $g_iDebugTopics = D_all & ~D_state;
+# All the D_xxxxx debug constants are listed in DSPS_Debug.pm.
 #-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-
 our $g_iDebugTopics = D_all & ~D_users & ~D_state & ~D_configRead;
-#our $g_iDebugTopics = 0;
 
 # drop root privs to become 'nobody'
 $< = $> = 65534 unless ($< == 65534);
@@ -502,7 +504,7 @@ sub sendSmsPage($$) {
 
     unless ($tResponse->is_success) {
         if (defined($g_hConfigOptions{fallback_email}) && open(MAIL, "| /usr/sbin/sendmail " . $g_hConfigOptions{fallback_email})) {
-            print MAIL "dsps can't send via gateway provider!";
+            print MAIL "DSPS can't send via gateway provider!";
             close(MAIL);
         }
     }
