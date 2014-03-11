@@ -1848,6 +1848,9 @@ sub hitDspsApi($$) {
     my $bSSL = ($iServerPort == 443) || ($sServerAddr =~ /^https:\/\//i);
     $sServerAddr = (($bSSL ? 'https' : 'http') . '://' . $sServerAddr) unless ($sServerAddr =~ /^http/i);
 
+    # ssl_opts appears no longer supported in LWP
+    $bSSL = 0;
+
     my $tUserAgent = LWP::UserAgent->new(($bSSL ? (ssl_opts => { verify_hostname => 0 }) : ()));
 	$tUserAgent->timeout(4);
     my $tRequest = $tUserAgent->post("$sServerAddr:$iServerPort/$sCommand", $rVars);
