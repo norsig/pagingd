@@ -515,6 +515,33 @@ sub sendSmsPage($$) {
 
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Construct the current status of all filters
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+sub filterStatus($) {
+    my $iSender = shift;
+    my $iNow = time();
+    my $sResult = '';
+    $sResult  = "USR\nRecoveries: " . ($g_hUsers{$iSender}->{filter_recoveries} == 1 ? 'blocked' : $g_hUsers{$iSender}->{filter_recoveries} == 2 ? 'smart' : 'allowed') . "\n\n" if $iSender;;
+
+    $sResult .= "SYS\nLoad&Recvr: " . ($DSPS_SystemFilter::iFilterRecoveryLoadTill > $iNow ? 'blocked' : 'allowed') . "\n";
+    $sResult .= "AllNagios: " . ($DSPS_SystemFilter::iFilterAllNagiosTill > $iNow ? 'blocked' : 'allowed') . "\n";
+    $sResult .= "\nRegex:\n";
+
+    my $sRegex = '';
+    foreach my $iRegexID (sort keys %DSPS_SystemFilter::rFilterRegex) {
+        if ($DSPS_SystemFilter::rFilterRegex{$iRegexID}->{till} > $iNow) {
+            $sRegex .= ' /' . $DSPS_SystemFilter::rFilterRegex{$iRegexID}->{regex} . "/" . 
+                ($iSender ? '' : ' (' . prettyDateTime($DSPS_SystemFilter::rFilterRegex{$iRegexID}->{till}) . ')') . "\n";
+        }
+    }
+
+    $sResult .= $sRegex ? $sRegex : " none.\n";
+    return $sResult;
+}
+
+
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Process commands a user sends to the system
 # Handles:
 #   - checking permissions - that user vs that cmd
@@ -686,22 +713,7 @@ sub handlePagingCommands($$) {
         # show current filters
         if ($sCommand =~ /^\?filter/) {
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, '?filters')) {
-                my $iNow = time();
-                my $sResult = "USR\nRecoveries: " . ($g_hUsers{$iSender}->{filter_recoveries} == 1 ? 'blocked' : $g_hUsers{$iSender}->{filter_recoveries} == 2 ? 'smart' : 'allowed') . "\n\n";
-
-                $sResult .= "SYS\nLoad&Recvr: " . ($DSPS_SystemFilter::iFilterRecoveryLoadTill > $iNow ? 'blocked' : 'allowed') . "\n";
-                $sResult .= "AllNagios: " . ($DSPS_SystemFilter::iFilterAllNagiosTill > $iNow ? 'blocked' : 'allowed') . "\n";
-                $sResult .= "\nRegex:\n";
-
-                my $sRegex = '';
-                foreach my $iRegexID (sort keys %DSPS_SystemFilter::rFilterRegex) {
-                    if ($DSPS_SystemFilter::rFilterRegex{$iRegexID}->{till} > $iNow) {
-                        $sRegex .= ' /' . $DSPS_SystemFilter::rFilterRegex{$iRegexID}->{regex} . "/\n";
-                    }
-                }
-
-                $sResult .= $sRegex ? $sRegex : " none.\n";
-                sendSmsPage($iSender, t($sResult));
+                sendSmsPage($iSender, t(filterStatus($iSender)));
             }
 
             return 1;
@@ -1702,6 +1714,7 @@ sub daemonMain() {
                 }
 
                 eval {
+                    my $sLiveStatus = TEST_RUN ? "   *** DAEMON IN TEST MODE - NOT LIVE ***\n" : '';
                     infoLog(($bAuthOk eq 1 ? "" : $bAuthOk ? "[Auth $bAuthOk] " : "[Auth FAILED] ") . $oRequest->uri->path . ' request from ' . 
                         $oConnection->peerhost() . ':' . $oConnection->peerport(). " specifying: " . join(', ', sort keys %{$rVars}));
 
@@ -1716,7 +1729,7 @@ sub daemonMain() {
                                     # in fire_fast mode we send the client the ack immediately and let them go on their way while we do the work
                                     # FWIW, most of what we do is prety fast anyway.  the real advantage is if we're creating an RT ticket on a
                                     # remote server that might make us slow to respond.
-                                    $oConnection->send_response(HTTP::Response->new(200, 'OK', HTTP::Headers->new(), "Message submitted\n"));
+                                    $oConnection->send_response(HTTP::Response->new(200, 'OK', HTTP::Headers->new(), $sLiveStatus . "Message submitted\n"));
                                     processPageEngine($rVars->{sender}, $rVars->{message});
                                 }
                                 else {
@@ -1724,7 +1737,7 @@ sub daemonMain() {
                                     my $sStatus = processPageEngine($rVars->{sender}, $rVars->{message});
 
                                     # send a response back to the dsps client
-                                    $oConnection->send_response(HTTP::Response->new(200, 'OK', HTTP::Headers->new(), "$sStatus\n"));
+                                    $oConnection->send_response(HTTP::Response->new(200, 'OK', HTTP::Headers->new(), $sLiveStatus . "$sStatus\n"));
                                 }
                             }
                             else {
@@ -1732,23 +1745,28 @@ sub daemonMain() {
                                 $oConnection->send_response(HTTP::Response->new(400, 'FAIL', HTTP::Headers->new(), "Submission is invalid.\n"));
                             }
                         }
-                        # versus print requests specifically from the client CLI
+                        # print requests specifically from the client CLI
                         elsif ($oRequest->uri->path eq '/print') {
                             if (defined($rVars->{escalation})) {
 
                                 # has the client asked for the on call schedule of a valid escalation?
                                 if (my $sKey = caselessHashLookup($rVars->{escalation}, %g_hEscalations)) {
-                                    $oConnection->send_response(HTTP::Response->new(201, 'OK', HTTP::Headers->new(), DSPS_Escalation::getFullOncallSchedule($sKey)));
+                                    $oConnection->send_response(HTTP::Response->new(201, 'OK', HTTP::Headers->new(), $sLiveStatus . DSPS_Escalation::getFullOncallSchedule($sKey)));
                                 }
                                 else {
-                                    $oConnection->send_response(HTTP::Response->new(201, 'OK', HTTP::Headers->new(), 
+                                    $oConnection->send_response(HTTP::Response->new(201, 'OK', HTTP::Headers->new(), $sLiveStatus . 
                                         "There is no currently configured escalation with that name.\n"));
                                 } 
                             }
                         }
+                        # status request from the client CLI
+                        elsif ($oRequest->uri->path eq '/status') {
+                            my $sStatus = "ROOM OCCUPANTS\n" . DSPS_Room::roomStatus(0) . "\n\n" . filterStatus(0); # RICK 
+                            $oConnection->send_response(HTTP::Response->new(201, 'OK', HTTP::Headers->new(), $sLiveStatus . $sStatus));
+                        }
                     }
                     else {
-                        $oConnection->send_response(HTTP::Response->new(403, 'FAIL', HTTP::Headers->new(), "Invalid authentication.\n"));
+                        $oConnection->send_response(HTTP::Response->new(403, 'FAIL', HTTP::Headers->new(), $sLiveStatus . "Invalid authentication.\n"));
                     }
 
                     $oConnection->close();
@@ -1806,9 +1824,9 @@ sub daemonAlreadyRunning() {
 # Print CLI syntax help
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub showUsage() {
-    print "$0 [-d | -s | -e | -p escalation] [-c config_file] [-u user] [message]\n   -d  (re)start the paging daemon in the background\n   -s  submit a message (pipe to stdin or via CLI)\n";
+    print "$0 [-d | -s | -e | -i | -p escalation] [-c config_file] [-u user] [message]\n   -d  (re)start the paging daemon in the background\n   -s  submit a message (pipe to stdin or via CLI)\n";
     print "   -e  submit an email (pipe to stdin or via CLI), i.e. ignore headers\n   -u  specify the submitting paging user\n   -p  print current oncall schedule for a given escalation\n";
-    print "   -f  fast message submission to the daemon; don't wait for processing\n   -c  specify a config filename (default /usr/local/bin/dsps3/config.dsps)\n";
+    print "   -f  fast message submission to the daemon; don't wait for processing\n   -c  specify a config filename (default /usr/local/bin/dsps3/config.dsps)\n   -i  show current status (info)\n";
 }
 
 
@@ -1879,6 +1897,7 @@ sub clientStartup() {
     my $bCmdSubmit      = 0;
     my $bCmdSubmitEmail = 0;
     my $bCmdRunTests    = 0;
+    my $bCmdStatus      = 0;
     my $bFireFast       = 0;
     my $sUser           = '';
     my $sEscalation     = '';
@@ -1888,6 +1907,7 @@ sub clientStartup() {
         's'         => \$bCmdSubmit,
         'e'         => \$bCmdSubmitEmail,
         'f'         => \$bFireFast,
+        'i'         => \$bCmdStatus,
         'config=s'  => \$g_sConfigFilename,
         't'         => \$bCmdRunTests,
         'user=s'    => \$sUser,
@@ -1989,6 +2009,20 @@ sub clientStartup() {
         }
         else {
             print hitDspsApi('print', [ escalation => $sEscalation ]);
+        }
+        exit(0);
+    }
+
+    # print current status
+    if ($bCmdStatus) {
+        readValidConfigOrDie($g_sConfigFilename);
+        
+        if (defined($g_hConfigOptions{http_auth}) && ($g_hConfigOptions{http_auth} =~ /([A-Z0-9-_+]+)/i)) {
+            my $sKey = $1;
+            print hitDspsApi('status', [ auth => $sKey ]);
+        }
+        else {
+            print hitDspsApi('status', [ ]);
         }
         exit(0);
     }
