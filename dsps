@@ -106,7 +106,7 @@ sub getLogRoomsTo() { return $g_hConfigOptions{log_rooms_to}; }
 
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-# Signal handler for a SIGINT
+# Signal handler for a SIGTERM
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub handlerDaemonExit() {
     $g_tListenerSocket->shutdown(2);
