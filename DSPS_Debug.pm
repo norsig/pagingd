@@ -5,7 +5,7 @@ use Sys::Syslog qw(:standard :macros);
 
 use base 'Exporter';
 our @EXPORT = ('D_all', 'D_rooms', 'D_users', 'D_pageEngine', 'D_filters', 'D_escalations', 'D_permissions', 'D_configRead', 'D_configWrite', 'D_state', 'D_rt', 'D_email',
-                'D_auth', 
+                'D_auth', 'D_mark',
                 'debugLog', 'infoLog');
 
 use constant D_rooms                      => 0x00000004;
@@ -20,8 +20,8 @@ use constant D_rt                         => 0x00000400;
 use constant D_configRead                 => 0x00000800;
 use constant D_configWrite                => 0x00001000;
 use constant D_auth                       => 0x00002000;
+use constant D_mark                       => 0x00004000;
 
-#use constant D                         => 0x00004000;
 #use constant D                         => 0x00008000;
 #use constant D                         => 0x00010000;
 #use constant D                         => 0x00020000;

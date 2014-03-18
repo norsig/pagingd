@@ -28,8 +28,8 @@
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 
-use constant TEST_RUN => 0;
-
+# this can be altered here or via the '-t' command-line argument
+our $g_bTEST_RUN = 0;
 
 use Proc::Daemon;
 use String::Random qw(random_string);
@@ -67,7 +67,7 @@ use strict;
 # $g_iDebugTopics = D_all & ~D_state;
 # All the D_xxxxx debug constants are listed in DSPS_Debug.pm.
 #-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-our $g_iDebugTopics = D_all & ~D_users & ~D_state & ~D_configRead;
+our $g_iDebugTopics = D_all & ~D_users & ~D_state & ~D_configRead & ~D_rooms;
 
 # drop root privs to become 'nobody'
 $< = $> = 65534 unless ($< == 65534);
@@ -76,10 +76,17 @@ $< = $> = 65534 unless ($< == 65534);
 my $tSignalSet = POSIX::SigSet->new();
 my $tSignalActionTerm = POSIX::SigAction->new("handlerDaemonExit", $tSignalSet, &POSIX::SA_NODEFER);
 my $tSignalActionHup = POSIX::SigAction->new("handlerSigHup", $tSignalSet, &POSIX::SA_NODEFER);
-POSIX::sigaction(&POSIX::SIGINT, $tSignalActionTerm);
+my $tSignalActionInt = POSIX::SigAction->new("handlerSigInt", $tSignalSet, &POSIX::SA_NODEFER);
 POSIX::sigaction(&POSIX::SIGTERM, $tSignalActionTerm);
 POSIX::sigaction(&POSIX::SIGHUP, $tSignalActionHup);
+POSIX::sigaction(&POSIX::SIGINT, $tSignalActionInt);
+
+# we fork children for numerous things; we don't care when they exit
 $SIG{CHLD} = 'IGNORE';
+
+# we get sigpipes occasionally if the client sending a message to the server closes the connection
+# before the server can reply.  we don't want those to kill our app.
+$SIG{PIPE} = 'IGNORE'; 
 
 # globals
 my $g_tListenerSocket;         
@@ -131,6 +138,24 @@ sub handlerSigHup() {
 }
 
 
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Signal handler for a SIGINT
+#-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+sub handlerSigInt() {
+    print "\n" . infoLog('daemon caught SIGINT (cntrl-C) - exiting');
+    print "*** NOTE: Don't forget to restart the daemon with -d\n";
+    print "*** If you altered the value of \$g_bTEST_RUN set it back to 0 first.\n";
+    $g_tListenerSocket->shutdown(2);
+    $g_tListenerSocket->close();
+    unlink(C_PIDPath);
+    saveState();
+    checkpointMetrics(1);
+    closelog();  # syslog
+    exit(0);
+}
+
+
+
 sub checkpointMetrics() {
     my $bForce = shift || 0;
     my $iStartingDate = $g_iTodayDate;
@@ -138,7 +163,7 @@ sub checkpointMetrics() {
 
     if ($iStartingDate) {
         if ($bForce || ($g_iTodayDate != $iStartingDate)) {
-            open(LOG, ">>" . C_MetricLog) or return(infoLog('Unable to write to ' . C_MetricLog));
+            open(LOG, ">>" . C_MetricLog) || return(infoLog('Unable to write to ' . C_MetricLog));
             print LOG "$iStartingDate: $g_iNumPagesToday\n";
             close(LOG);
         
@@ -229,23 +254,23 @@ sub sendEmail($$$) {
     my $sFrom = $g_hConfigOptions{smtp_from} ? $g_hConfigOptions{smtp_from} : 'noreply@dsps';
     my $sHeader = "From: $sFrom\n";
 
-    return if (TEST_RUN > 1);
+    return if ($g_bTEST_RUN > 1);
     return infoLog("ERROR:  cannot send mail without 'smtp_server' set in config file") unless $g_hConfigOptions{smtp_server};
     return infoLog("WARNING: cannot send mail without a recipient") unless ($sTo || $sCc);
 
     my $tSMTP = Net::SMTP->new($g_hConfigOptions{smtp_server});
     $tSMTP->mail($sFrom);
 
-    if (TEST_RUN) {
+    if ($g_bTEST_RUN) {
         if ($g_hConfigOptions{admin_email}) {
             foreach (split(/\s*[\s,;:]+\s*/, $g_hConfigOptions{admin_email})) {
                 $tSMTP->to($_);
             }
             $sHeader .= "To: " . $g_hConfigOptions{admin_email} . "\n";
-            debugLog(D_email, "$sFrom -> " . $g_hConfigOptions{admin_email} . " (due to TEST_RUN); normally To [$sTo], Cc [$sCc]");
+            debugLog(D_email, "$sFrom -> " . $g_hConfigOptions{admin_email} . " (due to $g_bTEST_RUN); normally To [$sTo], Cc [$sCc]");
         }
         else {
-            infoLog("ERROR:  cannot send mail in TEST_RUN mode without 'admin_email' set in config file");
+            infoLog("ERROR:  cannot send mail in $g_bTEST_RUN mode without 'admin_email' set in config file");
             $tSMTP->quit();
             return;
         }
@@ -319,7 +344,7 @@ sub rtCreateTicket($$$) {
     my $sSubject = shift;
     my $iTicketNumber = 0;
 
-    return 40313 if TEST_RUN;
+    return 40313 if $g_bTEST_RUN;
 
     if (rtCommand("create -t ticket set queue=$sQueue subject=\\'$sSubject\\'") =~ /Ticket (\d+) created/) {
         $iTicketNumber = $1;
@@ -445,7 +470,7 @@ sub sendSmsPage($$) {
     }
 
     # bail if testing
-    if (TEST_RUN) {
+    if ($g_bTEST_RUN) {
         infoLog("FAKE PAGE " . $g_hUsers{$iCellNumber}->{name} . " ($iCellNumber): $sMessage");
         return;
     }
@@ -493,19 +518,25 @@ sub sendSmsPage($$) {
     # if we add a second of sleep before audience update lines hopefully the actual messages
     # will get there first and the audience updates second.
     my $sAudiencePrefix = t("Audience is now");
-    sleep(1) if ($sMessage =~ /^$sAudiencePrefix/);
+    sleep(2) if ($sMessage =~ /^$sAudiencePrefix/);
 
     # send the page (perform POST)
     my $tBrowser = LWP::UserAgent->new;
     $tBrowser->timeout(10);
     my $tResponse = $tBrowser->post($g_hConfigOptions{gateway_url}, \%hGatewayParams);
 
-    infoLog("PAGE " . $g_hUsers{$iCellNumber}->{name} . " ($iCellNumber) [" . $tResponse->is_success . "]: $sMessage");
+    infoLog("PAGE " . $g_hUsers{$iCellNumber}->{name} . " ($iCellNumber) [" . $tResponse->code() . "]: $sMessage");
 
     unless ($tResponse->is_success) {
         if (defined($g_hConfigOptions{fallback_email}) && open(MAIL, "| /usr/sbin/sendmail " . $g_hConfigOptions{fallback_email})) {
             print MAIL "DSPS can't send via gateway provider!";
             close(MAIL);
+
+            if (open(ERROR_LOG, ">>/tmp/dsps.gateway.error")) {
+                print ERROR_LOG localtime(time()) . " : to $iCellNumber received " . $tResponse->code() . "\n";
+                print ERROR_LOG $tResponse->content() . "\n-------------------------------------------------------\n\n";
+                close(ERROR_LOG);    
+            }
         }
     }
 
@@ -1642,7 +1673,7 @@ sub verifySendingUser($) {
 sub daemonMain() {
     eval {
         my ($sServerAddr, $iServerPort) = getServerAddress(1, '0.0.0.0', 2176);
-        infoLog('daemon starting in ' . (TEST_RUN ? 'TEST MODE' : 'live mode') . "; listening on $sServerAddr:$iServerPort");
+        infoLog('daemon starting in ' . ($g_bTEST_RUN ? 'TEST MODE' : 'live mode') . "; listening on $sServerAddr:$iServerPort");
 
         restoreState();
 
@@ -1663,6 +1694,7 @@ sub daemonMain() {
         # daemon main loop
         while (1) {
 
+            # update daily stats for how many pages we've sent
             checkpointMetrics();
 
             # sleep at most 10 seconds waiting for a socket connection
@@ -1679,13 +1711,20 @@ sub daemonMain() {
 
                 eval {
                     eval {
+                        # set an alarm so we don't wait servicing this socket for too long
                         alarm(8);
                         local $SIG{ALRM} = sub { die "alarm\n"; };
+
+                        # accept the connection and parse the request
                         $oConnection = $g_tListenerSocket->accept();
                         $oRequest = $oConnection->get_request();
                         $rVars = CGI->new($oRequest->decoded_content())->Vars;
                     };
 
+                    # it's important to disable the existing alarm *outside* of the above [inner] eval().  otherwise
+                    # if the HTTP::Daemon object throws an exception it would exit that eval with the alarm still set.
+                    # hence we do it here.  and wrap it in an additional eval() in case the alarm goes off between the
+                    # two code lines that bracket this comment (above & below).
                     alarm(0);
                         
                     if ($@ eq "alarm\n" ) {
@@ -1714,7 +1753,7 @@ sub daemonMain() {
                 }
 
                 eval {
-                    my $sLiveStatus = TEST_RUN ? "   *** DAEMON IN TEST MODE - NOT LIVE ***\n" : '';
+                    my $sLiveStatus = $g_bTEST_RUN ? "   *** DAEMON IN TEST MODE - NOT LIVE ***\n" : '';
                     infoLog(($bAuthOk eq 1 ? "" : $bAuthOk ? "[Auth $bAuthOk] " : "[Auth FAILED] ") . $oRequest->uri->path . ' request from ' . 
                         $oConnection->peerhost() . ':' . $oConnection->peerport(). " specifying: " . join(', ', sort keys %{$rVars}));
 
@@ -1761,7 +1800,7 @@ sub daemonMain() {
                         }
                         # status request from the client CLI
                         elsif ($oRequest->uri->path eq '/status') {
-                            my $sStatus = "ROOM OCCUPANTS\n" . DSPS_Room::roomStatus(0) . "\n\n" . filterStatus(0); # RICK 
+                            my $sStatus = "ROOM OCCUPANTS\n" . DSPS_Room::roomStatus(0) . "\n\n" . filterStatus(0);
                             $oConnection->send_response(HTTP::Response->new(201, 'OK', HTTP::Headers->new(), $sLiveStatus . $sStatus));
                         }
                     }
@@ -1792,6 +1831,8 @@ sub daemonMain() {
     if ($@) {
         print infoLog("EXCEPTION: $@");
     }
+
+    infoLog("exiting daemonMain");
 }
 
 
@@ -1824,9 +1865,9 @@ sub daemonAlreadyRunning() {
 # Print CLI syntax help
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub showUsage() {
-    print "$0 [-d | -s | -e | -i | -p escalation] [-c config_file] [-u user] [message]\n   -d  (re)start the paging daemon in the background\n   -s  submit a message (pipe to stdin or via CLI)\n";
+    print "$0 [-d | -s | -e | -i | -p escalation] [-c config_file] [-u user] [message]\n   -d  (re)start the paging daemon in the background\n   -t  start the paging daemon in the foreground (for testing)\n   -s  submit a message (pipe to stdin or via CLI)\n";
     print "   -e  submit an email (pipe to stdin or via CLI), i.e. ignore headers\n   -u  specify the submitting paging user\n   -p  print current oncall schedule for a given escalation\n";
-    print "   -f  fast message submission to the daemon; don't wait for processing\n   -c  specify a config filename (default /usr/local/bin/dsps3/config.dsps)\n   -i  show current status (info)\n";
+    print "   -f  fast message submission to the daemon; don't wait for processing\n   -c  specify a config filename (default /etc/dsps.conf)\n   -i  show current status (info)\n";
 }
 
 
@@ -1847,9 +1888,6 @@ sub hitDspsApi($$) {
     my ($sServerAddr, $iServerPort) = getServerAddress(0, 'localhost', 2176);
     my $bSSL = ($iServerPort == 443) || ($sServerAddr =~ /^https:\/\//i);
     $sServerAddr = (($bSSL ? 'https' : 'http') . '://' . $sServerAddr) unless ($sServerAddr =~ /^http/i);
-
-    # ssl_opts appears no longer supported in LWP
-    $bSSL = 0;
 
     my $tUserAgent = LWP::UserAgent->new(($bSSL ? (ssl_opts => { verify_hostname => 0 }) : ()));
 	$tUserAgent->timeout(4);
@@ -1899,20 +1937,20 @@ sub clientStartup() {
     my $bCmdDaemon      = 0;
     my $bCmdSubmit      = 0;
     my $bCmdSubmitEmail = 0;
-    my $bCmdRunTests    = 0;
     my $bCmdStatus      = 0;
     my $bFireFast       = 0;
+    my $bRunForeground  = 0;
     my $sUser           = '';
     my $sEscalation     = '';
 
     GetOptions(
         'd'         => \$bCmdDaemon,
+        't'         => \$bRunForeground,
         's'         => \$bCmdSubmit,
         'e'         => \$bCmdSubmitEmail,
         'f'         => \$bFireFast,
         'i'         => \$bCmdStatus,
         'config=s'  => \$g_sConfigFilename,
-        't'         => \$bCmdRunTests,
         'user=s'    => \$sUser,
         'print=s'   => \$sEscalation
     );
@@ -2030,10 +2068,16 @@ sub clientStartup() {
         exit(0);
     }
 
-    if ($bCmdDaemon) {
+    if ($bCmdDaemon && $bRunForeground) {
+        print infoLog("ERROR: can't run in foreground and as daemon simultaneously");
+        exit(0);
+    }
+
+    if ($bCmdDaemon || $bRunForeground) {
         my $bRestart = 0;
         if (my $iPID = daemonAlreadyRunning()) {
-            infoLog("Killing existing daemon (pid=$iPID)");
+            my $sOutput = infoLog("Killing existing daemon (pid=$iPID)");
+            print $sOutput if $bRunForeground;
             kill('TERM', $iPID);
             $bRestart = 1;
             sleep(1);
@@ -2046,19 +2090,24 @@ sub clientStartup() {
 
         readValidConfigOrDie($g_sConfigFilename);
 
-        # print(($bRestart ? "Restarting" : "Starting") . " daemon.\n");
-        my $tDaemon = Proc::Daemon->new(work_dir => '/tmp', pid_file => C_PIDPath);
-        my $iDaemonPid = $tDaemon->Init;
-
-        daemonMain() unless $iDaemonPid;
+        if ($bCmdDaemon) {
+            my $tDaemon = Proc::Daemon->new(work_dir => '/tmp', pid_file => C_PIDPath);
+            my $iDaemonPid = $tDaemon->Init;
+            daemonMain() unless $iDaemonPid;
+        }
+        else {
+            $g_bTEST_RUN = 2 unless $g_bTEST_RUN;   # i.e. if already hardcoded to '1' then don't override that
+            print "  *** RUNNING IN FOREGROUND (\$g_bTEST_RUN=$g_bTEST_RUN) ***\n";
+            daemonMain();
+        }
         exit(0);
     }
 
-    if ($bCmdRunTests) {
-        readValidConfigOrDie('config.test');
-        DSPS_Test::startTests();
-        exit(0);
-    }
+    #if ($bCmdRunTests) {
+    #    readValidConfigOrDie('config.test');
+    #    DSPS_Test::startTests();
+    #    exit(0);
+    #}
 
     showUsage();
 }

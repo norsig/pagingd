@@ -15,7 +15,7 @@ our @EXPORT = ('%g_hConfigOptions');
 
 # set defaults
 our %g_hConfigOptions = ('require_at' => 0);;
-our $sConfigPath = '/usr/local/bin/dsps3/config';
+our $sConfigPath = '/etc';
 
 my @aValueDirectives = ('default_maint', 'gateway_url', 'gateway_params', 'fallback_email', 'recovery_regex', 'dsps_server', 'smtp_server', 'server_listen', 'smtp_from', 'admin_email', 
                         'rt_connection', 'override_user', 'override_regex', 'rt_link', 'log_rooms_to', 'nagios_problem_regex', 'nagios_any_regex', 'http_auth');
@@ -98,7 +98,7 @@ sub configSyntaxValid() {
 
 
 sub readConfig(;$) {
-    my $sConfigFileName = shift || "$sConfigPath/config.dsps";
+    my $sConfigFileName = shift || "$sConfigPath/dsps.conf";
 
     unless (open(CFG, $sConfigFileName)) {
         print infoLog("Unable to read $sConfigFileName");
@@ -443,7 +443,7 @@ sub readConfig(;$) {
 
 
 sub writeConfig() {
-   my $sConfigFileName = shift || "$sConfigPath/config.dsps";
+   my $sConfigFileName = shift || "$sConfigPath/dsps.conf";
     open(CFG, $sConfigFileName) || return 0;
     open(NEW, ">$sConfigFileName.new") || return infoLog("Unable to write new config file ($sConfigFileName.new)");
 
