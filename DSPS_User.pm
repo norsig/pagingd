@@ -13,7 +13,7 @@ our @EXPORT = ('%g_hUsers', '%g_hAmbigNames');
 our %g_hUsers;
 our %g_hAmbigNames;
 my %hDedupeByMessage;
-my $iLastDedupeMaintTime;
+my $iLastDedupeMaintTime = 0;
 
 
 sub createUser {
