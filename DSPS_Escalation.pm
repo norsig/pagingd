@@ -242,9 +242,6 @@ sub checkEscalationCancel($$) {
             $g_hRooms{$iRoom}->{escalation_to} = '';
             $g_hRooms{$iRoom}->{escalation_name} = '';
 
-            infoLog("checkEscalationCancel: $sEscName");
-            #infoLog("checkEscalationCancel: " . $g_hEscalations{$g_hRooms{$iRoom}->{$sEscName}}->{cancel_msg} if defined ($g_hRooms{$iRoom});
-
             if (DSPS_User::humanUsersPhone($iSender)) {
                 infoLog("escalation for room $iRoom canceled by " . $g_hUsers{$iSender}->{name});
                 main::sendSmsPage($iSender, t($g_hEscalations{$sEscName}->{cancel_msg}))

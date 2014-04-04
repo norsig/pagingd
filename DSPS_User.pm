@@ -288,13 +288,13 @@ sub blockedByFilter($$$) {
             $g_hUsers{$iPhone}->{throttle} = '1/' . $iNow;
         }
         else {
-            $g_hUsers{$iPhone}->{throttle} = $iCount+1 . '/' . $iNow;
+            $g_hUsers{$iPhone}->{throttle} = $iCount+1 . '/' . $iLastTime;
 
             if ($iCount > THROTTLE_PAGES - 1) {
                 infoLog("PAGE THROTTLED ($iPhone): $sMessage");
                 return 1;
             }
-            elsif (($iCount == THROTTLE_PAGES - 1) && ($sMessage =~ /^Throttled::/)) {
+            elsif (($iCount == THROTTLE_PAGES - 1) && ($sMessage !~ /^Throttled::/)) {
                 $$rMessage = 'Throttled::' . $sMessage;
             }
         }

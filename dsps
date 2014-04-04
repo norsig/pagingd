@@ -72,6 +72,9 @@ our $g_iDebugTopics = D_all & ~D_users & ~D_state & ~D_configRead & ~D_rooms;
 # drop root privs to become 'nobody'
 $< = $> = 65534 unless ($< == 65534);
 
+# process name
+$0 = 'dsps: client process (perl)';
+
 # install signal handlers
 my $tSignalSet = POSIX::SigSet->new();
 my $tSignalActionTerm = POSIX::SigAction->new("handlerDaemonExit", $tSignalSet, &POSIX::SA_NODEFER);
@@ -314,6 +317,8 @@ sub rtCommand($;$) {
     # we fork into the background and continue on immediately.
     if ($sInput) {
         unless (fork()) {
+            $0 = 'dsps: rt update process (perl)';
+
             # close the listening socket in the child
             $g_tListenerSocket->close();
 
@@ -496,6 +501,8 @@ sub sendSmsPage($$) {
     # a large number of children and go out near simultaneously
     return if fork();  # parent
 
+    $0 = 'dsps: page submission process (perl)';
+
     # close the listening socket in the child
     $g_tListenerSocket->close();
 
@@ -517,8 +524,7 @@ sub sendSmsPage($$) {
     # there's no way to predict which will get to the user first.  we still can't guarantee but
     # if we add a second of sleep before audience update lines hopefully the actual messages
     # will get there first and the audience updates second.
-    my $sAudiencePrefix = t("Audience is now");
-    sleep(2) if ($sMessage =~ /^$sAudiencePrefix/);
+    sleep(2) if ($sMessage =~ /^.{0,5}Audience is now/);
 
     # send the page (perform POST)
     my $tBrowser = LWP::UserAgent->new;
@@ -1672,6 +1678,8 @@ sub verifySendingUser($) {
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub daemonMain() {
     eval {
+        $0 = 'dsps: ' . ($g_bTEST_RUN ? 'test' : 'live') . ' server process (perl)';
+        
         my ($sServerAddr, $iServerPort) = getServerAddress(1, '0.0.0.0', 2176);
         infoLog('daemon starting in ' . ($g_bTEST_RUN ? 'TEST MODE' : 'live mode') . "; listening on $sServerAddr:$iServerPort");
 
@@ -2096,7 +2104,7 @@ sub clientStartup() {
             daemonMain() unless $iDaemonPid;
         }
         else {
-            $g_bTEST_RUN = 2 unless $g_bTEST_RUN;   # i.e. if already hardcoded to '1' then don't override that
+            $g_bTEST_RUN = 3 unless $g_bTEST_RUN;   # i.e. if already hardcoded to '1' then don't override that
             print "  *** RUNNING IN FOREGROUND (\$g_bTEST_RUN=$g_bTEST_RUN) ***\n";
             daemonMain();
         }
