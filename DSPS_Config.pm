@@ -6,6 +6,7 @@ use DSPS_Room;
 use DSPS_Alias;
 use DSPS_Escalation;
 use DSPS_CmdPermission;
+use DSPS_Trigger;
 use DSPS_Debug;
 use strict;
 use warnings;
@@ -92,6 +93,34 @@ sub configSyntaxValid() {
         }
     }
 
+    # per trigger check
+    foreach my $sTrig (keys %g_hTriggers) {
+        unless (defined($g_hTriggers{$sTrig}->{name}) && $g_hTriggers{$sTrig}->{name}) {
+            print STDERR infoLog("trigger defined with no name");
+            $bValid = 0;
+        }
+
+        unless (defined($g_hTriggers{$sTrig}->{message_to_users}) && $g_hTriggers{$sTrig}->{message_to_users}) {
+            print STDERR infoLog("trigger $sTrig is missing a trig_message");
+            $bValid = 0;
+        }
+
+        unless (defined($g_hTriggers{$sTrig}->{event_match_string}) && $g_hTriggers{$sTrig}->{event_match_string}) {
+            print STDERR infoLog("trigger $sTrig is missing a trig_regex");
+            $bValid = 0;
+        }
+
+        unless (defined($g_hTriggers{$sTrig}->{command}) && $g_hTriggers{$sTrig}->{command}) {
+            print STDERR infoLog("trigger $sTrig is missing a trig_command");
+            $bValid = 0;
+        }
+
+        unless (defined($g_hTriggers{$sTrig}->{required_user}) && $g_hTriggers{$sTrig}->{required_user}) {
+            print STDERR infoLog("trigger $sTrig is missing a trig_user");
+            $bValid = 0;
+        }
+    }
+
     return $bValid;
 }
 
@@ -165,6 +194,78 @@ sub readConfig(;$) {
             }
             next;
         }
+
+        # trigger tag
+        if (/\btrigger\s*:\s*(.*)$/i) {
+            $sInfo = $1;
+            $sSection = 'trigger';
+
+            if ($sInfo) {
+                $rStruct = DSPS_Trigger::createOrReplaceTrigger($sInfo);
+            }
+            else {
+                print infoLog("configuration error - 'trigger:' must be followed by a name $sLineNum");
+                ++$iErrors;
+            }
+            next;
+        }
+
+        # trigger regex
+        if (/\b(?:trig_regex)\s*:\s*\/*(.+?)\/*\s*$/i) {
+            my $iValue = $1;
+
+            if ($sSection eq 'trigger') {
+                $rStruct->{event_match_string} = $iValue;
+            }
+            else {
+                print infoLog("configuration error - regex not part of a valid trigger: trig_regex:$iValue $sLineNum");
+                ++$iErrors;
+            }
+            next;
+        }
+
+        # trigger message
+        if (/\b(?:trig_message)\s*:\s*(.+)/i) {
+            my $iValue = $1;
+
+            if ($sSection eq 'trigger') {
+                $rStruct->{message_to_users} = $iValue;
+            }
+            else {
+                print infoLog("configuration error - message not part of a valid trigger: message_to_users:$iValue $sLineNum");
+                ++$iErrors;
+            }
+            next;
+        }
+
+        # trigger user 
+        if (/\b(?:trig_user)\s*:\s*(.+)/i) {
+            my $iValue = $1;
+
+            if ($sSection eq 'trigger') {
+                $rStruct->{required_user} = $iValue;
+            }
+            else {
+                print infoLog("configuration error - user not part of a valid trigger: trig_user:$iValue $sLineNum");
+                ++$iErrors;
+            }
+            next;
+        }
+
+        # trigger command 
+        if (/\b(?:trig_command)\s*:\s*(.+)/i) {
+            my $iValue = $1;
+
+            if ($sSection eq 'trigger') {
+                $rStruct->{command} = $iValue;
+            }
+            else {
+                print infoLog("configuration error - command not part of a valid trigger: trig_command:$iValue $sLineNum");
+                ++$iErrors;
+            }
+            next;
+        }
+
 
         # alias tag
         if (/\balias\s*:\s*(\S*)/i) {
@@ -419,6 +520,7 @@ sub readConfig(;$) {
 
             foreach my $sDirective (@aValueDirectives) {
                 if ($sOption =~ /$sDirective/i) {
+                    $sValue =~ s/^\s*\/(.*?)\/\s*$/$1/;
                     $g_hConfigOptions{$sDirective} = $sValue;
                     next LINE;
                 }
@@ -426,7 +528,7 @@ sub readConfig(;$) {
 
             foreach my $sDirective (@aBoolDirectives) {
                 if ($sOption =~ /$sDirective/i) {
-                    $g_hConfigOptions{$sDirective} = ($sValue =~ /yes|true|1|enable|on/i ? 1: 0);;
+                    $g_hConfigOptions{$sDirective} = ($sValue =~ /y|t|1|enable|on/i ? 1: 0);;
                     next LINE;
                 }
             }

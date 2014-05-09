@@ -100,6 +100,7 @@ my $g_iNumPagesToday = 0;
 # these one-liners exist as functions so they can be called by some of the included modules
 # essentially these avoid circular include dependencies
 sub getRecoveryRegex() { return $g_hConfigOptions{recovery_regex}; }
+sub getProblemRegex() { return $g_hConfigOptions{nagios_problem_regex}; }
 sub getShowNonHuman() { return $g_hConfigOptions{show_nonhuman}; }
 sub getAdminEmail() { return $g_hConfigOptions{admin_email}; }
 sub getRTLink() { return $g_hConfigOptions{rt_link}; }
@@ -342,6 +343,25 @@ sub rtCommand($;$) {
 
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Execute an external command.
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+sub forkExecCommand($) {
+    my $sCommand = shift;
+
+    unless (fork()) {
+        $0 = 'dsps: exec (perl)';
+
+        # close the listening socket in the child
+        $g_tListenerSocket->close();
+
+        exec($sCommand);
+        exit(0);  # never get here
+    }
+}
+
+
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Create a new RT ticket via rtCommand()
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub rtCreateTicket($$$) {
@@ -525,7 +545,7 @@ sub sendSmsPage($$) {
     # there's no way to predict which will get to the user first.  we still can't guarantee but
     # if we add a second of sleep before audience update lines hopefully the actual messages
     # will get there first and the audience updates second.
-    sleep(2) if ($sMessage =~ /^.{0,5}Audience is now/);
+    sleep(2) if ($sMessage =~ /^.{0,5}((Audience is now)|(DSPS Trigger))/);
 
     # send the page (perform POST)
     my $tBrowser = LWP::UserAgent->new;
@@ -716,12 +736,12 @@ sub handlePagingCommands($$) {
         # set/edit a regex filter
         if ($sCommand =~ /^:((nore$)|(noreg))/) {
 
-            if ($sParams =~ /(\d+\w{0,1})\s+(.*)/i) {
+            if ($sParams =~ /(\d+\w{0,1})\s+(.*)/) {
                 my $sTime  = $1;
                 my $sRegex = $2;
 
                 # drop slash delimeters if specified by user
-                $sRegex = $1 if ($sRegex =~ m,^/(.*)/$,);
+                $sRegex =~ s,^\s*/(.*?)/\s*$,$1,;
 
                 if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':noregex')) {
                     my ($iSeconds, $sTimeText) = parseUserTime($sTime);
@@ -1471,6 +1491,47 @@ sub sendSystemMessageToRoom($$$) {
 
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Send a message that DSPS originates to all
+# room occupants.
+# Handles:
+#   - theming the message - t()
+#   - sending to just a single user if no room
+#   - silence modifier logic
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+sub sendCustomSystemMessageToRoom($$$) {
+    my ($iSender, $sMessage, $iSilenceModifier) = @_;
+    my $iRoom = DSPS_Room::findUsersRoom($iSender);
+
+    # if the user isn't in a room then just send the message to that one person
+    unless ($iRoom) {
+        sendSmsPage($iSender, t($sMessage)) if (DSPS_User::humanUsersPhone($iSender));
+        return;
+    }
+
+    # update room expiration
+    $g_hRooms{$iRoom}->{expiration_time} = time() + 3600;
+
+    # loop through all room occupants
+    foreach my $iUserPhone (keys %{ $g_hRooms{$iRoom}->{occupants_by_phone} }) {
+
+        # only text human users
+        if (DSPS_User::humanUsersPhone($iUserPhone)) {
+
+            # iSilenceModifier is set by the presence of a plus or minus sign on the end of the user's command.  it translates to:
+            #  1 (set by :command+), meaning always send the notification
+            #  0 (set by :command), meaning send the notification based on it being during hours most people are awake
+            # -1 (set by :command-), meaning never send the notification - e.g. only send it back to the person themself
+            sendSmsPage($iUserPhone, t($sMessage))
+              if ( ($iSilenceModifier > 0)
+                || (($iSilenceModifier == 0) && isDuringWakingHours())
+                || ($iSender == $iUserPhone));
+        }
+    }
+}
+
+
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Ideally we get all messages sent to us via HTTP.
 # But if we're accepting messages via email as
 # part of our gateway interface (i.e. things people
@@ -1624,6 +1685,9 @@ sub processPageEngine($$) {
 
     # if this is a human reply record the time in the room
     $g_hRooms{$iRoom}->{last_human_reply_time} = time() if ((defined $g_hRooms{$iRoom}) && DSPS_User::humanUsersPhone($iSender));
+
+    # check for and potentially fire any valid triggers
+    DSPS_Trigger::checkAllTriggers($iSender, $sOrigMessage);
 
     return 'Message submitted.';
 }
@@ -1809,7 +1873,8 @@ sub daemonMain() {
                         }
                         # status request from the client CLI
                         elsif ($oRequest->uri->path eq '/status') {
-                            my $sStatus = "ROOM OCCUPANTS\n" . DSPS_Room::roomStatus(0) . "\n\n" . filterStatus(0);
+                            my $sTriggers = DSPS_Trigger::triggerStatus();
+                            my $sStatus = "ROOM OCCUPANTS\n" . DSPS_Room::roomStatus(0) . "\n\n" . filterStatus(0) . ($sTriggers ? "\n$sTriggers" : '');
                             $oConnection->send_response(HTTP::Response->new(201, 'OK', HTTP::Headers->new(), $sLiveStatus . $sStatus));
                         }
                     }
@@ -1874,7 +1939,7 @@ sub daemonAlreadyRunning() {
 # Print CLI syntax help
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub showUsage() {
-    print "$0 [-d | -s | -e | -i | -p escalation] [-c config_file] [-u user] [message]\n   -d  (re)start the paging daemon in the background\n   -t  start the paging daemon in the foreground (for testing)\n   -s  submit a message (pipe to stdin or via CLI)\n";
+    print "dsps [-d | -s | -e | -i | -p escalation] [-c config_file] [-u user] [message]\n   -d  (re)start the paging daemon in the background\n   -t  start the paging daemon in the foreground (for testing)\n   -s  submit a message (pipe to stdin or via CLI)\n";
     print "   -e  submit an email (pipe to stdin or via CLI), i.e. ignore headers\n   -u  specify the submitting paging user\n   -p  print current oncall schedule for a given escalation\n";
     print "   -f  fast message submission to the daemon; don't wait for processing\n   -c  specify a config filename (default /etc/dsps.conf)\n   -i  show current status (info)\n";
 }
