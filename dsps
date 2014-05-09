@@ -99,8 +99,8 @@ my $g_iNumPagesToday = 0;
 
 # these one-liners exist as functions so they can be called by some of the included modules
 # essentially these avoid circular include dependencies
-sub getRecoveryRegex() { return $g_hConfigOptions{recovery_regex}; }
-sub getProblemRegex() { return $g_hConfigOptions{nagios_problem_regex}; }
+sub getRecoveryRegex() { return parseRegex($g_hConfigOptions{nagios_recovery_regex}); }
+sub getProblemRegex() { return parseRegex($g_hConfigOptions{nagios_problem_regex}); }
 sub getShowNonHuman() { return $g_hConfigOptions{show_nonhuman}; }
 sub getAdminEmail() { return $g_hConfigOptions{admin_email}; }
 sub getRTLink() { return $g_hConfigOptions{rt_link}; }
@@ -738,10 +738,7 @@ sub handlePagingCommands($$) {
 
             if ($sParams =~ /(\d+\w{0,1})\s+(.*)/) {
                 my $sTime  = $1;
-                my $sRegex = $2;
-
-                # drop slash delimeters if specified by user
-                $sRegex =~ s,^\s*/(.*?)/\s*$,$1,;
+                my $sRegex = parseRegex($2);
 
                 if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':noregex')) {
                     my ($iSeconds, $sTimeText) = parseUserTime($sTime);
@@ -1387,7 +1384,7 @@ sub sendUserMessageToRoom($$$) {
     substr($sMessage, 0, 1) = '' if substr($sMessage, 0, 1) eq '!';
 
     # if this is a problem page from nagios record the time in the room
-    $g_hRooms{$iRoom}->{last_problem_time} = time() if ($sMessage =~ /$g_hConfigOptions{nagios_problem_regex}/);
+    $g_hRooms{$iRoom}->{last_problem_time} = time() if ($sMessage =~ parseRegex($g_hConfigOptions{nagios_problem_regex}));
 
     # track the last automation message for resends
     $g_hRooms{$iRoom}->{last_nonhuman_message} = $sMessage unless DSPS_User::humanUsersPhone($iSenderPhone);
@@ -1557,6 +1554,7 @@ sub checkUserOverride($$) {
 
     # has the admin configured an override_user and override_regex?
     if (defined($g_hConfigOptions{override_user}) && defined($g_hConfigOptions{override_regex})) {
+        my $sOverrideRegex = parseRegex($g_hConfigOptions{override_regex});
 
         # does the override_user's name match a configured user?
         if (my $sOverridePhone = DSPS_User::matchUserByName($g_hConfigOptions{override_user})) {
@@ -1566,7 +1564,7 @@ sub checkUserOverride($$) {
                (('!' . lc($sSender)) eq lc($g_hUsers{$sOverridePhone}->{name}))) {
 
                 # does the message match the override_regex?
-                if ($sMessage =~ m/$g_hConfigOptions{override_regex}/mi) {
+                if ($sMessage =~ m/$sOverrideRegex/mi) {
                     return $1;
                 }
             }

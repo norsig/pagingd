@@ -4,9 +4,17 @@ use strict;
 use warnings;
 
 use base 'Exporter';
-our @EXPORT = ('ONEWEEK', 'parseUserTime', 'isDuringWakingHours', 'prettyDateTime', 'prettyPhone', 'caselessHashLookup');
+our @EXPORT = ('ONEWEEK', 'parseUserTime', 'isDuringWakingHours', 'prettyDateTime', 'prettyPhone', 'caselessHashLookup', 'parseRegex');
 
 use constant ONEWEEK => 604800;
+
+sub parseRegex($) {
+    my $sRegex = shift;
+
+    $sRegex =~ s,^\s*/(.*?)/\s*$,$1,;
+
+    return $sRegex;
+}
 
 
 sub isDuringWakingHours() {

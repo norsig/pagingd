@@ -53,9 +53,12 @@ sub blockedByFilter($$) {
         return 1;
     }
 
+#sys:nagios_recovery_regex: ^[-+]{0,1}RECOVERY\b
+#sys:nagios_problem_regex: ^[-+]{0,1}PROBLEM
+
     # check the all nagios filter
     if (($iFilterAllNagiosTill > $iNow) &&
-        ($sMessage =~ /$g_hConfigOptions{nagios_any_regex}/)) { 
+        (($sMessage =~ /$g_hConfigOptions{nagios_problem_regex}/) || ($sMessage =~ /$g_hConfigOptions{nagios_recovery_regex}/))) {
         infoLog("message matched All Nagios filter");
         return 1;
     }
