@@ -41,7 +41,6 @@ sub checkAllTriggers($$) {
 
             # does the message match
             my $sRegex = $g_hTriggers{$sTrig}->{event_match_string};
-            infoLog("checking [$sRegex] for [$sMessage]");
             if (my @aBackRefs = ($sMessage =~ /$sRegex/is)) {
 
                 # setup trigger variables and interpolate regexes from the message
