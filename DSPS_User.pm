@@ -262,20 +262,21 @@ sub blockedByFilter($$$) {
     my $sMessage = ${$rMessage};
     my $iNow = time();
     my $sRecoveryRegex = main::getRecoveryRegex();
+    my $sRearmedRegex = 'DSPS Trigger.*rearmed';
     use constant THROTTLE_PAGES => 5;
 
     # FITLER:  Recoveries per user
-    if ($sRecoveryRegex && ($g_hUsers{$iPhone}->{filter_recoveries} == 1) && ($sMessage =~ /$sRecoveryRegex/)) {
-        infoLog($g_hUsers{$iPhone}->{name} . " has recoveries filtered; not sending copy of message to " . $iPhone);
+    if ($sRecoveryRegex && ($g_hUsers{$iPhone}->{filter_recoveries} == 1) && (($sMessage =~ /$sRecoveryRegex/) || ($sMessage =~ /$sRearmedRegex/))) {
+        infoLog("blocked for " . $g_hUsers{$iPhone}->{name} . " ($iPhone) [NoRecovery]: $sMessage");
         return 1;
     }
 
     # FITLER:  Smart recoveries per user
     # Smart recoveries means to let the recovery through if it during the day or [when night] if it's within 3 minutes
     # of the last problem page
-    if ($sRecoveryRegex && ($g_hUsers{$iPhone}->{filter_recoveries} == 2) && ($sMessage =~ /$sRecoveryRegex/) &&
+    if ($sRecoveryRegex && ($g_hUsers{$iPhone}->{filter_recoveries} == 2) && (($sMessage =~ /$sRecoveryRegex/) || ($sMessage =~ /$sRearmedRegex/)) &&
         !isDuringWakingHours() && ($iNow - $iLastProblemTime > 180)) {
-        infoLog($g_hUsers{$iPhone}->{name} . " has smart recoveries enabled; not sending copy of message to " . $iPhone);
+        infoLog("blocked for " . $g_hUsers{$iPhone}->{name} . " ($iPhone) [SmartRecovery]: $sMessage");
         return 1;
     }
 

@@ -4,6 +4,7 @@ use DSPS_String;
 use DSPS_Util;
 use DSPS_Debug;
 use DSPS_User;
+use DSPS_Room;
 use strict;
 use warnings;
 
@@ -73,6 +74,8 @@ sub checkAllTriggers($$) {
 
                     $g_hTriggers{$sTrig}->{locked} = 0;
                     main::sendCustomSystemMessageToRoom($iUser, "DSPS Trigger $sName: rearmed.", 1);
+                    # NOTE: Don't change the syntax of the above string without making the same update
+                    # to the regex in DSPS_User::blockedByFilter().
                 }
             }
 

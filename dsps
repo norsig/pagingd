@@ -348,12 +348,15 @@ sub rtCommand($;$) {
 sub forkExecCommand($) {
     my $sCommand = shift;
 
+    return infoLog("FAKE EXEC Trigger: $sCommand") if $g_bTEST_RUN;
+
     unless (fork()) {
         $0 = 'dsps: exec (perl)';
 
         # close the listening socket in the child
         $g_tListenerSocket->close();
 
+        infoLog("Exec Trigger: $sCommand");
         exec($sCommand);
         exit(0);  # never get here
     }
@@ -1513,6 +1516,8 @@ sub sendCustomSystemMessageToRoom($$$) {
 
         # only text human users
         if (DSPS_User::humanUsersPhone($iUserPhone)) {
+
+            next if DSPS_User::blockedByFilter($iUserPhone, \$sMessage, $g_hRooms{$iRoom}->{last_problem_time});
 
             # iSilenceModifier is set by the presence of a plus or minus sign on the end of the user's command.  it translates to:
             #  1 (set by :command+), meaning always send the notification
