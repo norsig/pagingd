@@ -1449,6 +1449,13 @@ sub sendUserMessageToRoom($$$) {
 
 
 
+sub shouldTell($) {
+    my $iSilenceModifier = shift;
+    return (($iSilenceModifier > 0) || (($iSilenceModifier == 0) && isDuringWakingHours()));
+}
+
+
+
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Send a message that DSPS originates to all
 # room occupants.
@@ -1480,10 +1487,8 @@ sub sendSystemMessageToRoom($$$) {
             #  1 (set by :command+), meaning always send the notification
             #  0 (set by :command), meaning send the notification based on it being during hours most people are awake
             # -1 (set by :command-), meaning never send the notification - e.g. only send it back to the person themself
-            sendSmsPage($iUserPhone, t(($iSender == $iUserPhone ? 'You have ' : $g_hUsers{$iSender}->{name} . ' has ') . $sMessage))
-              if ( ($iSilenceModifier > 0)
-                || (($iSilenceModifier == 0) && isDuringWakingHours())
-                || ($iSender == $iUserPhone));
+            sendSmsPage($iUserPhone, t(($iSender == $iUserPhone ? ('You have ' . (shouldTell($iSilenceModifier) ? '' : 'silently ')) : $g_hUsers{$iSender}->{name} . ' has ') . $sMessage))
+              if (shouldTell($iSilenceModifier) || ($iSender == $iUserPhone));
         }
     }
 }
