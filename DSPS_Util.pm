@@ -2,9 +2,13 @@ package DSPS_Util;
 
 use strict;
 use warnings;
+use DSPS_Debug;
+use DSPS_String;
+use Date::Calc qw(:all);
+
 
 use base 'Exporter';
-our @EXPORT = ('ONEWEEK', 'parseUserTime', 'isDuringWakingHours', 'prettyDateTime', 'prettyPhone', 'caselessHashLookup', 'parseRegex');
+our @EXPORT = ('ONEWEEK', 'parseUserTime', 'parseDateTime', 'isDuringWakingHours', 'prettyDateTime', 'prettyPhone', 'caselessHashLookup', 'parseRegex');
 
 use constant ONEWEEK => 604800;
 
@@ -76,6 +80,28 @@ sub parseUserTime($;$) {
     }
 
     return 0;
+}
+
+
+
+sub parseDateTime($$$$$) {
+    my ($iMonth, $iDay, $iYear, $iHour, $iMinute) = @_;
+    if ($iYear < 1000) { $iYear += 2000; }
+
+    my ($iNowSec, $iNowMin, $iNowHour, $iNowDay, $iNowMonth, $iNowYear, $iNowDoW, $iNowDoY, $iNowDST) = localtime(time());
+    $iNowYear += 1900;
+    $iNowMonth += 1;
+
+    my ($iDd, $iDh, $iDm, $iDs) = Delta_DHMS($iNowYear, $iNowMonth, $iNowDay, $iNowHour, $iNowMin, 0, $iYear, $iMonth, $iDay, $iHour, $iMinute, 0);
+    my $iTotalSeconds = $iDd * 86400 + $iDh * 3600 + $iDm;
+
+    my $sText = '';
+    if ($iDd) { $sText = "$iDd day" . ($iDd > 1 ? 's' : ''); }
+    if ($iDh) { $sText = cr($sText, ', ') . "$iDh hour" . ($iDh > 1 ? 's' : ''); }
+        elsif ($iDm) { $sText = cr($sText, ', ') . "$iDm minute" . ($iDm > 1 ? 's' : ''); }
+        elsif ($iDs) { $sText = cr($sText, ', ') . "$iDs second" . ($iDs == 1 ? '' : 's'); }
+
+    return ($iTotalSeconds, $sText);
 }
 
 

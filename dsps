@@ -40,6 +40,7 @@ use Getopt::Long;
 use CGI qw();
 use Net::SMTP;
 use POSIX qw(strftime);
+use MIME::QuotedPrint::Perl;
 use LWP 5.64;
 use lib "/usr/local/bin/dsps3";
 use DSPS_User;
@@ -548,7 +549,7 @@ sub sendSmsPage($$) {
     # there's no way to predict which will get to the user first.  we still can't guarantee but
     # if we add a second of sleep before audience update lines hopefully the actual messages
     # will get there first and the audience updates second.
-    sleep(2) if ($sMessage =~ /^.{0,5}((Audience is now)|(DSPS Trigger))/);
+    sleep(4) if ($sMessage =~ /^.{0,5}((Audience is now)|(DSPS Trigger))/);
 
     # send the page (perform POST)
     my $tBrowser = LWP::UserAgent->new;
@@ -736,6 +737,57 @@ sub handlePagingCommands($$) {
             return 1;
         }
 
+        # list all triggers
+        if ($sCommand =~ /^\?trigger/) {
+            if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, '?triggers')) {
+                sendSmsPage($iSender, t(DSPS_Trigger::listTriggers()));
+            }
+
+            return 1;
+        }
+
+        # disarm a trigger
+        if ($sCommand =~ /^:disarm/) {
+            if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':disarm')) {
+                if ((defined $sParams) && $sParams) {
+                    my $sResult = DSPS_Trigger::disarmTriggers($sParams);
+
+                    if ($sResult) {
+                        sendSmsPage($iSender, t($sResult));
+                    }
+                    else {
+                        sendSmsPage($iSender, t(S_NoSuchTrigger));
+                    }
+                    return 1;
+                }
+
+                sendSmsPage($iSender, t(':disarm [name_of_trigger]'));
+            }
+
+            return 1;
+        }
+
+        # arm a trigger
+        if ($sCommand =~ /^:arm/) {
+            if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':arm')) {
+                if ((defined $sParams) && $sParams) {
+                    my $sResult = DSPS_Trigger::armTriggers($sParams);
+
+                    if ($sResult) {
+                        sendSmsPage($iSender, t($sResult));
+                    }
+                    else {
+                        sendSmsPage($iSender, t(S_NoSuchTrigger));
+                    }
+                    return 1;
+                }
+
+                sendSmsPage($iSender, t(':arm [name_of_trigger]'));
+            }
+
+            return 1;
+        }
+
         # set/edit a regex filter
         if ($sCommand =~ /^:((nore$)|(noreg))/) {
 
@@ -800,10 +852,17 @@ sub handlePagingCommands($$) {
 
         # set/update vacation time
         if ($sCommand =~ /^:(?:no)*vaca/) {
+            my ($iSeconds, $sTimeText);
             $sParams = '0' if ($sCommand =~ /^:no/); 
 
-            if ($sParams =~ /(\d+\w{0,1})/) {
-                my ($iSeconds, $sTimeText) = parseUserTime($1);
+            if (($sParams =~ /^\s*(\d+\w{0,1})\s*$/) || ($sParams =~ /(\d+)[-\/](\d+)[-\/](\d+)[\@: ]+(\d+):(\d+)/)) {
+
+                if ($3) {
+                    ($iSeconds, $sTimeText) = parseDateTime($1, $2, $3, $4, $5);
+                }
+                else {
+                    ($iSeconds, $sTimeText) = parseUserTime($1);
+                }
 
                 if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':vacation')) {
                     if ($iSeconds) {
@@ -2094,10 +2153,7 @@ sub clientStartup() {
                 if ($bInBody) {
                     if ($bQuotedPrintable) {
                         s/=(\n*)$/$1/;
-                        s/=3D/=/g;
-
-                        my $iCount = s/=00//g;
-                        s/=00//g if ($iCount > 1);
+                        $_ = decode_qp($_);
                     }
 
                     s/\&apos;/\'/g;

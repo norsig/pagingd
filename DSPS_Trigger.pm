@@ -30,6 +30,60 @@ sub createOrReplaceTrigger {
 
 
 
+sub listTriggers() {
+    my $sResult = '';
+
+    foreach my $sTrig (sort keys %g_hTriggers) {
+        $sResult .= ($sResult ? "\n" : '') . ($g_hTriggers{$sTrig}->{locked} ? '-' : '+') . "$sTrig" . ($g_hTriggers{$sTrig}->{last_tripped} ? (' (' . prettyDateTime($g_hTriggers{$sTrig}->{last_tripped}) . ')') : '');
+    }
+
+    return("Triggers:\n" . ($sResult ? $sResult : '  None.'));
+}
+
+
+
+sub armTriggers($) {
+    my $sRegex = shift;
+    my $sResult = '';
+
+    foreach my $sTrig (sort keys %g_hTriggers) {
+        if ($sTrig =~ /$sRegex/i) {
+            if ($g_hTriggers{$sTrig}->{locked}) {
+                $g_hTriggers{$sTrig}->{locked} = 0;
+                $sResult .= ($sResult ? "\n" : '') . "Trigger '$sTrig' is now armed.";
+            }
+            else {
+                $sResult .= ($sResult ? "\n" : '') . "Trigger '$sTrig' was already armed.";
+            }
+        }
+    }
+
+    return $sResult;
+}
+
+
+
+sub disarmTriggers($) {
+    my $sRegex = shift;
+    my $sResult = '';
+
+    foreach my $sTrig (sort keys %g_hTriggers) {
+        if ($sTrig =~ /$sRegex/i) {
+            if ($g_hTriggers{$sTrig}->{locked}) {
+                $sResult .= ($sResult ? "\n" : '') . "Trigger '$sTrig' is not currently armed.";
+            }
+            else {
+                $g_hTriggers{$sTrig}->{locked} = 1;
+                $sResult .= ($sResult ? "\n" : '') . "Trigger '$sTrig' is now temporarily disarmed.";
+            }
+        }
+    }
+
+    return $sResult;
+}
+
+
+
 sub checkAllTriggers($$) {
     my $iUser = shift;
     my $sMessage = shift;
@@ -89,7 +143,7 @@ sub triggerStatus() {
 
     foreach my $sTrig (sort keys %g_hTriggers) {
         my $sLast = $g_hTriggers{$sTrig}->{last_tripped};
-        $sResult .= "Trigger '$sTrig' is " . ($g_hTriggers{$sTrig}->{locked} ? 'locked' : 'armed') . ($sLast ? " [$sLast]" : '') . ".\n";
+        $sResult .= "Trigger '$sTrig' is " . ($g_hTriggers{$sTrig}->{locked} ? 'locked' : 'armed') . ($sLast ? " [" . prettyDateTime($sLast) . "]" : '') . ".\n";
     }
     
     return $sResult;

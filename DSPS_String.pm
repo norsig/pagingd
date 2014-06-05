@@ -10,7 +10,7 @@ our @EXPORT = ('t', 'sv', 'cr', 'S_NoPermission', 'S_NoConversations', 'S_Audien
                 'S_NothingToSwap', 'S_NoRecipSwap1', 'S_SwapSyntax', 'S_NoSwapMatches1', 'S_MultipleMatches3', 'S_UnsharedSchedule2', 'S_ScheduleSwap1',
                 'C_PIDPath', 'C_StatePath', 'S_AutoReplySyx', 'S_AutoReplySet1', 'S_AutoReplyRm', 'S_NoSuchEscalation1', 'S_NoEscalations', 'S_NoSuchEntity', 'S_NoSuchHelp', 'S_PullSyntax',
                 'S_SmartAlreadyF', 'S_SmartFiltered', 'E_SwapSuccess4', 'S_EmailSent1', 'S_NeedEmail', 'E_VacationSet2', 'E_VacationCancel1', 'E_VacationElapsed1',
-                'S_HelpGeneral', 'S_HelpCommandsA', 'S_HelpCommandsB', 'S_HelpSyntax', 'C_MetricLog',
+                'S_HelpGeneral', 'S_HelpCommandsA', 'S_HelpCommandsB', 'S_HelpSyntax', 'C_MetricLog', 'S_NoSuchTrigger',
                 'E_EscalationPrep3', 'E_EscalationEsc4', 'S_VacaNeedTime', 'S_NoVacations', 'S_AmbiguousIgnored1', 'S_AmbiguousReject2', '@A_HelpTopics');
 
 use constant S_NoPermission     => "You don't have permission for this command.";
@@ -43,7 +43,7 @@ use constant S_NoEscalations    => "There are no escalations currently configure
 use constant S_NoSuchEntity     => "There's no group, alias, escalation or user by that name.";
 use constant S_EmailSent1       => "The room's history has been emailed to %%.";
 use constant S_NeedEmail        => "You need to specify a recipient's email address.  e.g. ':email ADDRESS'";
-use constant S_VacaNeedTime     => "The vacation command needs a time specified.  e.g. ':vacation 3d'";
+use constant S_VacaNeedTime     => "The vacation command needs a time specified.  e.g. ':vacation 3d' or ':vacation 5/2/14 17:00'";
 use constant S_NoVacations      => "No one has currently configured vacation time.";
 use constant S_AmbiguousIgnored1=> "Ambiguous name reference '%%' ignored;  message was sent as is.";
 use constant S_AmbiguousReject2 => "%% is ambiguous.  Try %%.";
@@ -53,6 +53,7 @@ use constant S_HelpGeneral      => "Use:\n  ?help TOPIC\nfor help on a particula
 use constant S_HelpCommandsA    => "?oncall\n?rooms\n?vacation\n?filter\n?groups\n?NAME\n:macro\n:nonagios\nnorecovery\n:smartrecovery\n:vacation\n:leave\n:email";
 use constant S_HelpCommandsB    => ":disband\n:pull NAMES\n:autoreply\n:sleep\n:maint\n:swap\n:ack\n?help TOPIC";
 use constant S_HelpSyntax       => "?help TOPIC\nwhere topic can be a command, description or idea you help with.  Try to keep the topic to a single word for better results.";
+use constant S_NoSuchTrigger    => "There are no triggers that match the name you provided.";
 
 
 use constant E_SwapSuccess4     => "Subject: Oncall schedule change\n\n" .
@@ -111,6 +112,10 @@ our @A_HelpTopics = (
 
     ":email ADDRESS",
 
+    "?triggers\n" .
+    ":disarm NAME\n" .
+    ":arm NAME",
+
     ":ack (enable room ack)",
 
     "?oncall\n" .
@@ -150,9 +155,11 @@ sub t($;@) {
 
 
 # continue a line
-sub cr($) {
+sub cr($;$) {
     my $sText = shift;
-    return ($sText ? "$sText\n" : $sText);
+    my $sDelimiter = shift || "\n";
+
+    return ($sText ? "$sText$sDelimiter" : $sText);
 }
 
 
