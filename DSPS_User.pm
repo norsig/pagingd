@@ -262,6 +262,7 @@ sub blockedByFilter($$$) {
     my $sMessage = ${$rMessage};
     my $iNow = time();
     my $sRecoveryRegex = main::getRecoveryRegex();
+    my $sProblemRegex = main::getProblemRegex();
     my $sRearmedRegex = 'DSPS Trigger.*rearmed';
     use constant THROTTLE_PAGES => 5;
 
@@ -290,6 +291,15 @@ sub blockedByFilter($$$) {
         }
         else {
             $g_hUsers{$iPhone}->{throttle} = $iCount+1 . '/' . $iLastTime;
+
+            if (($sMessage =~ /$sProblemRegex/) && ($iCount > 2 * THROTTLE_PAGES + 1)) {
+                if (main::getAllNagiosFilterTillGlobal() < $iNow) {
+                    main::setAllNagiosFilterTillGlobal($iNow + 60*30);   # half hour
+                    $g_hUsers{$iPhone}->{throttle} = '';
+                    main::sendCustomSystemMessageToRoom($iPhone, S_AutoNagiosMute, 2);
+                    return 1;
+                }
+            }
 
             if ($iCount > THROTTLE_PAGES - 1) {
                 infoLog("PAGE THROTTLED ($iPhone): $sMessage");

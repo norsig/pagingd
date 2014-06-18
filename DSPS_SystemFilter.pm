@@ -9,7 +9,7 @@ use strict;
 use warnings;
 
 use base 'Exporter';
-our @EXPORT = ();
+our @EXPORT = ('getAllNagiosFilterTill', 'setAllNagiosFilterTill');
 
 our $iFilterRecoveryLoadTill = 0;
 our $iFilterAllNagiosTill = 0;
@@ -52,9 +52,6 @@ sub blockedByFilter($$) {
         infoLog("message matched Recovery or Load filter");
         return 1;
     }
-
-#sys:nagios_recovery_regex: ^[-+]{0,1}RECOVERY\b
-#sys:nagios_problem_regex: ^[-+]{0,1}PROBLEM
 
     # check the all nagios filter
     if (($iFilterAllNagiosTill > $iNow) &&
