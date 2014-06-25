@@ -8,9 +8,11 @@ use Date::Calc qw(:all);
 
 
 use base 'Exporter';
-our @EXPORT = ('ONEWEEK', 'parseUserTime', 'parseDateTime', 'isDuringWakingHours', 'prettyDateTime', 'prettyPhone', 'caselessHashLookup', 'parseRegex');
+our @EXPORT = ('ONEWEEK', 'ROOM_LENGTH', 'parseUserTime', 'parseDateTime', 'isDuringWakingHours', 'prettyDateTime', 'prettyPhone', 'caselessHashLookup', 'parseRegex');
 
 use constant ONEWEEK => 604800;
+use constant ROOM_LENGTH => 3600;
+
 
 sub parseRegex($) {
     my $sRegex = shift;

@@ -48,7 +48,7 @@ sub debugLog($$) {
 	if ($main::g_iDebugTopics & $iTopic) {
         my @aCaller = caller(1);
 		syslog(LOG_DEBUG, $aCaller[3] . " $sMessage");
-        print STDERR ("[debugLog] " . $aCaller[3] . " $sMessage\n") if $main::g_bTEST_RUN > 2;
+        print STDERR (localtime(time) . " [debugLog] " . $aCaller[3] . " $sMessage\n") if $main::g_bTEST_RUN > 2;
 	}
 }
 
@@ -56,7 +56,7 @@ sub debugLog($$) {
 sub infoLog($) {
     my $sMessage = shift;
     syslog(LOG_INFO, "$sMessage");
-    print STDERR ("[infoLog] $sMessage\n") if $main::g_bTEST_RUN > 2;
+    print STDERR (localtime(time) . " [infoLog] $sMessage\n") if $main::g_bTEST_RUN > 2;
     return $sMessage . "\n";
 }
 

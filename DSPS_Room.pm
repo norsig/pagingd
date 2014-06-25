@@ -3,6 +3,7 @@ package DSPS_Room;
 use DSPS_String;
 use DSPS_User;
 use DSPS_Debug;
+use DSPS_Util;
 use strict;
 use warnings;
 
@@ -31,7 +32,7 @@ sub createRoom {
         occupants_by_phone => {},
         saved_occupants_by_phone => {},
         most_occupants_by_phone => {},
-        expiration_time => time() + 3600,
+        expiration_time => time() + ROOM_LENGTH,
         escalation_time => 0,
         escalation_to => '',
         escalation_orig_sender => '',
@@ -45,6 +46,8 @@ sub createRoom {
         last_human_reply_time => 0,
         creation_time => time(),
         last_nonhuman_message => '',
+        summary => '',
+        sum_reminder_sent => '',
     };
 
     debugLog(D_rooms, "created room #$iEmptyRoom with expiration of " . $g_hRooms{$iEmptyRoom}->{expiration_time});
@@ -74,6 +77,8 @@ sub cloneRoomMinusOccupants($) {
     $g_hRooms{$iNewRoom}->{last_human_reply_time} = $g_hRooms{$iOrigRoom}->{last_human_reply_time};
     $g_hRooms{$iNewRoom}->{creation_time} = $g_hRooms{$iOrigRoom}->{creation_time};
     $g_hRooms{$iNewRoom}->{last_nonhuman_message} = $g_hRooms{$iOrigRoom}->{last_nonhuman_message};
+    $g_hRooms{$iNewRoom}->{summary} = $g_hRooms{$iOrigRoom}->{summary};
+    $g_hRooms{$iNewRoom}->{sum_reminder_sent} = $g_hRooms{$iOrigRoom}->{sum_reminder_sent};
 
     debugLog(D_rooms, "room $iOrigRoom cloned to $iNewRoom");
     return $iNewRoom;
@@ -278,9 +283,28 @@ sub roomRemoveOccupant {
 
 
 sub roomsHealthCheck {
+    my $iNow = time();
+
+
     foreach my $iRoomNumber (keys %g_hRooms) {
 
-        if ($g_hRooms{$iRoomNumber}->{expiration_time} <= time()) {
+        # room half-way to expired
+        if (($g_hRooms{$iRoomNumber}->{expiration_time} <= $iNow + (ROOM_LENGTH / 2)) && 
+            $g_hRooms{$iRoomNumber}->{last_nonhuman_message}) {   # it wasn't just a human-to-human chat
+
+            # admin has summary reminders enabled, it's day-time,
+            # summary hasn't been set and reminder hasn't been sent
+            if (main::getSummaryReminder() && isDuringWakingHours() && 
+                !$g_hRooms{$iRoomNumber}->{summary} && !$g_hRooms{$iRoomNumber}->{sum_reminder_sent}) {
+
+                main::sendCustomSystemMessageToRoom((keys(%{$g_hRooms{$iRoomNumber}->{occupants_by_phone}}))[0], S_SummaryReminder, 0);
+                $g_hRooms{$iRoomNumber}->{sum_reminder_sent} = 1;
+            }
+
+        }
+
+        # room expired
+        if ($g_hRooms{$iRoomNumber}->{expiration_time} <= $iNow) {
             infoLog("room $iRoomNumber expired with " . keys(%{$g_hRooms{$iRoomNumber}->{occupants_by_phone}}) . " occupants");
             logRoom($iRoomNumber);
             delete $g_hRooms{$iRoomNumber};
@@ -327,12 +351,18 @@ sub logRoom($) {
         print LOG localtime($g_hRooms{$iRoom}->{creation_time}) . " for " . timeLength(time() - $g_hRooms{$iRoom}->{creation_time}) . "\t";
         print LOG roomStatus($iRoom, 0, 1, 1) . "\n";
 
-        foreach my $sHistory (@{$g_hRooms{$iRoom}->{history}}) {
-            $sHistory =~ s/\n/; /g;
-            print LOG $sHistory . "\n";
+        if ($g_hRooms{$iRoom}->{summary} && ($g_hRooms{$iRoom}->{summary} =~ /^(.*?)\s*;\s*(.*)$/)) {
+            print LOG "\n\t* " . ${$g_hRooms{$iRoom}->{history}}[0] . "\n\n";
+            print LOG "Description: $1\n";
+            print LOG "Station Impact: $2\n";
+        } else {
+            foreach my $sHistory (@{$g_hRooms{$iRoom}->{history}}) {
+                $sHistory =~ s/\n/; /g;
+                print LOG $sHistory . "\n";
+            }
         }
 
-        print LOG "--------------------------------------------------------------------------------\n";
+        print LOG "\n--------------------------------------------------------------------------------\n";
 
         close(LOG);
     }
