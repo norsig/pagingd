@@ -176,9 +176,9 @@ sys:override_user: !signal
 # too.
 sys:override_regex: ^Subject: sms_reply:(\d+)
 
-# RT link to include in escalation emails; if ommitted the ticket number isn't
-# included in the email.  If alert_email is ommitted from the escalation, no
+# RT link to include in escalation emails; if omitted the ticket number isn't
+# included in the email.  If alert_email is omitted from the escalation, no
 # email is generated at all.
-sys:rt_link: http://help.ds.npr.org?/Ticket/Display.html?id=
+sys:rt_link: http://rt.mycompany.org/Ticket/Display.html?id=
 
 
