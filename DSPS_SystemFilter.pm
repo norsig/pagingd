@@ -12,50 +12,54 @@ use base 'Exporter';
 our @EXPORT = ('getAllNagiosFilterTill', 'setAllNagiosFilterTill');
 
 our $iFilterRecoveryLoadTill = 0;
-our $iFilterAllNagiosTill = 0;
+our $iFilterAllNagiosTill    = 0;
 our %rFilterRegex;
+
 
 
 sub freezeState() {
     my %hFilterState;
 
     $hFilterState{recovery} = $iFilterRecoveryLoadTill;
-    $hFilterState{all} = $iFilterAllNagiosTill;
-    $hFilterState{regex} = \%rFilterRegex;
+    $hFilterState{all}      = $iFilterAllNagiosTill;
+    $hFilterState{regex}    = \%rFilterRegex;
 
     return freeze(%hFilterState);
 }
 
 
+
 sub thawState($) {
     my %hFilterState;
 
-    eval { %hFilterState = thaw(shift); };
+    eval {%hFilterState = thaw(shift);};
     return infoLog("Unable to parse filter state data - ignoring") if ($@);
 
     $iFilterRecoveryLoadTill = $hFilterState{recovery};
-    $iFilterAllNagiosTill = $hFilterState{all};
-    %rFilterRegex = %{$hFilterState{regex}};
+    $iFilterAllNagiosTill    = $hFilterState{all};
+    %rFilterRegex            = %{ $hFilterState{regex} };
     debugLog(D_state, "restored filter state data (regexes: " . keys(%rFilterRegex) . ")");
 }
 
 
 
 sub blockedByFilter($$) {
-    my $sMessage = shift; 
-    my $iRoom = shift;
-    my $iNow = time();
+    my $sMessage = shift;
+    my $iRoom    = shift;
+    my $iNow     = time();
 
     # check the recovery or system load filter
-    if (($iFilterRecoveryLoadTill > $iNow) &&
-        ($sMessage =~ /(^[-+!]{0,1}RECOVERY)|(System Load)/)) { 
+    if (   ($iFilterRecoveryLoadTill > $iNow)
+        && ($sMessage =~ /(^[-+!]{0,1}RECOVERY)|(System Load)/))
+    {
         infoLog("message matched Recovery or Load filter");
         return 1;
     }
 
     # check the all nagios filter
-    if (($iFilterAllNagiosTill > $iNow) &&
-        (($sMessage =~ /$g_hConfigOptions{nagios_problem_regex}/) || ($sMessage =~ /$g_hConfigOptions{nagios_recovery_regex}/))) {
+    if (   ($iFilterAllNagiosTill > $iNow)
+        && (($sMessage =~ /$g_hConfigOptions{nagios_problem_regex}/) || ($sMessage =~ /$g_hConfigOptions{nagios_recovery_regex}/)))
+    {
         infoLog("message matched All Nagios filter");
         return 1;
     }
@@ -64,13 +68,14 @@ sub blockedByFilter($$) {
     foreach my $iRegexFilterID (keys %rFilterRegex) {
         my $sThisRegex = $rFilterRegex{$iRegexFilterID}->{regex};
         $sThisRegex =~ s/(\\s| )/(\\s|)/g;
-        if (($rFilterRegex{$iRegexFilterID}->{till} >= $iNow) &&
-            ($sMessage =~ /$sThisRegex/i)) {
+        if (   ($rFilterRegex{$iRegexFilterID}->{till} >= $iNow)
+            && ($sMessage =~ /$sThisRegex/i))
+        {
             infoLog("message matched Regex filter (" . $rFilterRegex{$iRegexFilterID}->{regex} . ")");
             return 1;
         }
 
-        rmRegexFilter($rFilterRegex{$iRegexFilterID}->{regex}) if ($rFilterRegex{$iRegexFilterID}->{till} < $iNow); 
+        rmRegexFilter($rFilterRegex{$iRegexFilterID}->{regex}) if ($rFilterRegex{$iRegexFilterID}->{till} < $iNow);
     }
 
     # check for a previously seen message in a room with ack-mode enabled
@@ -78,7 +83,7 @@ sub blockedByFilter($$) {
         my $sGenericMessage = $sMessage;
         $sGenericMessage =~ s/\bDate:\s.*$//s;
 
-        foreach my $sPrevMsg (@{$g_hRooms{$iRoom}->{history}}) {
+        foreach my $sPrevMsg (@{ $g_hRooms{$iRoom}->{history} }) {
             if ($sPrevMsg =~ /$sGenericMessage/) {
                 infoLog("message matched previous in room's history (ack-mode)");
                 return 1;
@@ -104,18 +109,16 @@ sub setAllNagiosFilterTill($) {
     $iFilterAllNagiosTill = $iTill;
 }
 
+sub getAllNagiosFilterTill() {return $iFilterAllNagiosTill;}
 
-
-sub getAllNagiosFilterTill() { return $iFilterAllNagiosTill; }
-
-sub getRecoveryLoadFilterTill() { return $iFilterRecoveryLoadTill; }
+sub getRecoveryLoadFilterTill() {return $iFilterRecoveryLoadTill;}
 
 
 
 sub newRegexFilter($$) {
     my ($sRegex, $iTill) = @_;
     my $iLastID = 1;
-    
+
     # if the regex matches an existing one, we'll use the same ID and update that one's expiration
     # time.  otherwise we find the next available ID
     foreach my $iRegexFilterID (sort keys %rFilterRegex) {
@@ -125,7 +128,7 @@ sub newRegexFilter($$) {
     }
 
     debugLog(D_filters, (defined $rFilterRegex{$iLastID} ? 'updated' : 'added') . " RegexFilter /$sRegex/ (id $iLastID)");
-    $rFilterRegex{$iLastID} = { regex => $sRegex, till => $iTill }; 
+    $rFilterRegex{$iLastID} = { regex => $sRegex, till => $iTill };
 }
 
 
@@ -143,6 +146,5 @@ sub rmRegexFilter($) {
 
     return 0;
 }
-
 
 1;

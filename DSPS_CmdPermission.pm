@@ -9,32 +9,33 @@ use warnings;
 use base 'Exporter';
 our @EXPORT = ();
 
-
 our %hCmdPermission;
-our %hDefaultCmdPermission = (  '??'            => 10,
-                                '?groups'       => 10,
-                                '?rooms'        => 20,
-                                '?oncall'       => 20,
-                                '?filters'      => 20,
-                                '?triggers'     => 20,
-                                ':email'        => 10,
-                                ':macro'        => 10,
-                                ':autoreply'    => 15,
-                                ':vacation'     => 20,
-                                ':swap'         => 30,
-                                ':disband'      => 35,
-                                ':pull'         => 35,
-                                ':disarm'       => 40,
-                                ':arm'          => 40,
-                                ':sleep'        => 40,
-                                ':sum'          => 50,
-                                ':norecovery'   => 50,
-                                ':maint'        => 50,
-                                ':ack'          => 50,
-                                ':nonagios'     => 50,
-                                ':noregex'      => 60,
-                                '^'             => 30,
-                                 );
+our %hDefaultCmdPermission = (
+    '??'          => 10,
+    '?groups'     => 10,
+    '?rooms'      => 20,
+    '?oncall'     => 20,
+    '?filters'    => 20,
+    '?triggers'   => 20,
+    ':email'      => 10,
+    ':macro'      => 10,
+    ':autoreply'  => 15,
+    ':vacation'   => 20,
+    ':swap'       => 30,
+    ':disband'    => 35,
+    ':pull'       => 35,
+    ':disarm'     => 40,
+    ':arm'        => 40,
+    ':sleep'      => 40,
+    ':sum'        => 50,
+    ':norecovery' => 50,
+    ':maint'      => 50,
+    ':ack'        => 50,
+    ':nonagios'   => 50,
+    ':noregex'    => 60,
+    '^'           => 30,
+);
+
 
 
 sub checkPermissions($$) {
@@ -42,8 +43,12 @@ sub checkPermissions($$) {
     my $iCommandPermission = defined $hCmdPermission{$sCommand} ? $hCmdPermission{$sCommand} : $hDefaultCmdPermission{$sCommand};
     my $bSuccess = $g_hUsers{$iUser}->{access_level} >= $iCommandPermission;
 
-    debugLog(D_permissions, ($bSuccess ? 'PASS' : 'FAIL') . ", command: \"$sCommand\", requires: $iCommandPermission [" .
-        (defined $hCmdPermission{$sCommand} ? 'specified' : 'default') . "], user ($iUser): " . $g_hUsers{$iUser}->{access_level});
+    debugLog(D_permissions,
+            ($bSuccess ? 'PASS' : 'FAIL')
+          . ", command: \"$sCommand\", requires: $iCommandPermission ["
+          . (defined $hCmdPermission{$sCommand} ? 'specified' : 'default')
+          . "], user ($iUser): "
+          . $g_hUsers{$iUser}->{access_level});
 
     infoLog("Permission denied for " . $g_hUsers{$iUser}->{name} . " to run $sCommand") unless $bSuccess;
     return $bSuccess;

@@ -15,21 +15,26 @@ use base 'Exporter';
 our @EXPORT = ('%g_hConfigOptions');
 
 # set defaults
-our %g_hConfigOptions = ('require_at' => 0);;
+our %g_hConfigOptions = ('require_at' => 0);
 our $sConfigPath = '/etc';
 
-my @aValueDirectives = ('default_maint', 'gateway_url', 'gateway_params', 'fallback_email', 'nagios_recovery_regex', 'dsps_server', 'smtp_server', 'server_listen', 'smtp_from', 'admin_email', 
-                        'rt_connection', 'override_user', 'override_regex', 'rt_link', 'log_rooms_to', 'nagios_problem_regex', 'http_auth');
+my @aValueDirectives = (
+    'default_maint',  'gateway_url',   'gateway_params', 'fallback_email',       'nagios_recovery_regex', 'dsps_server',
+    'smtp_server',    'server_listen', 'smtp_from',      'admin_email',          'rt_connection',         'override_user',
+    'override_regex', 'rt_link',       'log_rooms_to',   'nagios_problem_regex', 'http_auth'
+);
 my @aBoolDirectives = ('show_nonhuman', 'require_at', 'summary_reminder');
 my %hSeenAliases;
 
-
 sub checkAliasRecursion($);
+
+
+
 sub checkAliasRecursion($) {
     my $sAlias = shift;
 
     $hSeenAliases{$sAlias} = 1;
-    tie my(%hCaselessAliases), 'Hash::Case::Preserve';
+    tie my (%hCaselessAliases), 'Hash::Case::Preserve';
     %hCaselessAliases = %g_hAliases;
 
     while ($g_hAliases{$sAlias}->{referent} =~ m,(\w+),g) {
@@ -50,6 +55,7 @@ sub checkAliasRecursion($) {
 
 sub configSyntaxValid() {
     my $bValid = 1;
+    my $bAt    = $g_hConfigOptions{require_at};
 
     # per user checks
     foreach my $iPhone (keys %g_hUsers) {
@@ -67,19 +73,36 @@ sub configSyntaxValid() {
             print STDERR infoLog('user ' . $g_hUsers{$iPhone}->{name} . " ($iPhone) has a blank regex");
             $bValid = 0;
         }
+
+        if ($bAt && defined($g_hUsers{$iPhone}->{auto_include})) {
+            foreach my $sReference (split(/[ ,;:]+/, $g_hUsers{$iPhone}->{auto_include})) {
+                unless ($sReference =~ /^\@/) {
+                    print STDERR infoLog("WARNING: user " . $g_hUsers{$iPhone}->{name} . "'s redirect includes $sReference without leading @ (with require_at:true)");
+                }
+            }
+        }
     }
 
     # per escalation checks
     foreach my $sEscName (keys %g_hEscalations) {
-       if ($g_hEscalations{$sEscName}->{timer} && !$g_hEscalations{$sEscName}->{escalate_to}) {
-           print STDERR infoLog("escalation $sEscName has a timer defined but no escalate_to");
-           $bValid = 0;
-       }
+        if ($g_hEscalations{$sEscName}->{timer} && !$g_hEscalations{$sEscName}->{escalate_to}) {
+            print STDERR infoLog("escalation $sEscName has a timer defined but no escalate_to");
+            $bValid = 0;
+        }
 
-       if (!$g_hEscalations{$sEscName}->{timer} && $g_hEscalations{$sEscName}->{escalate_to}) {
-           print STDERR infoLog("escalation $sEscName has an escalate_to defined but no timer");
-           $bValid = 0;
-       }
+        if (!$g_hEscalations{$sEscName}->{timer} && $g_hEscalations{$sEscName}->{escalate_to}) {
+            print STDERR infoLog("escalation $sEscName has an escalate_to defined but no timer");
+            $bValid = 0;
+        }
+
+        if ($bAt) {
+            foreach my $sReference (split(/[ ,;:]+/, $g_hEscalations{$sEscName}->{escalate_to})) {
+                unless ($sReference =~ /^\@/) {
+                    print STDERR infoLog("WARNING: escalation ${sEscName}'s escalate_to includes $sReference without leading @ (with require_at:true)");
+                }
+            }
+        }
+
     }
 
     # per alias check
@@ -91,6 +114,15 @@ sub configSyntaxValid() {
             print STDERR infoLog("Alias error: $sError");
             $bValid = 0;
         }
+
+        if ($bAt) {
+            foreach my $sReference (split(/[ ,;:]+/, $g_hAliases{$sAlias}->{referent})) {
+                unless ($sReference =~ /^\@/) {
+                    print STDERR infoLog("WARNING: alias $sAlias includes $sReference without leading @ (with require_at:true)");
+                }
+            }
+        }
+
     }
 
     # per trigger check
@@ -121,6 +153,14 @@ sub configSyntaxValid() {
         }
     }
 
+    if ($bAt) {
+        foreach my $sReference (split(/[ ,;:]+/, $g_hConfigOptions{default_maint})) {
+            unless ($sReference =~ /^\@/) {
+                print STDERR infoLog("WARNING: sys:default_maint includes $sReference without leading @ (with require_at:true)");
+            }
+        }
+    }
+
     return $bValid;
 }
 
@@ -135,12 +175,12 @@ sub readConfig(;$) {
     }
 
     my $sSection = '';
-    my $sInfo = '';
-    my $iErrors = 0;
-    my $rStruct = 0;
-    my $iLine = 0;
+    my $sInfo    = '';
+    my $iErrors  = 0;
+    my $rStruct  = 0;
+    my $iLine    = 0;
 
-    LINE: while (<CFG>) {
+  LINE: while (<CFG>) {
         ++$iLine;
         my $sLineNum = "[$sConfigFileName line $iLine]";
 
@@ -154,7 +194,7 @@ sub readConfig(;$) {
 
         # group tag
         if (/\bgroup\s*:\s*(\S*)/i) {
-            $sInfo = $1;
+            $sInfo    = $1;
             $sSection = 'group';
 
             unless ($sInfo) {
@@ -166,15 +206,14 @@ sub readConfig(;$) {
 
         # group: user line
         if (/\b(?:u|user)\s*:\s*(.*)/i) {
-            my $sLine = $1;
+            my $sLine  = $1;
             my $sGroup = $sInfo;
 
             if ($sSection eq 'group') {
                 my @aData = split(/\s*,\s*/, $sLine);
 
-                if (defined $g_hUsers{$aData[2]}) {
-                    print infoLog("configuration error - user with phone number " . $aData[2] . " defined twice (" .
-                        $g_hUsers{$aData[2]}->{name} . ' & ' . $aData[0] . ") $sLineNum");
+                if (defined $g_hUsers{ $aData[2] }) {
+                    print infoLog("configuration error - user with phone number " . $aData[2] . " defined twice (" . $g_hUsers{ $aData[2] }->{name} . ' & ' . $aData[0] . ") $sLineNum");
                     ++$iErrors;
                     next;
                 }
@@ -183,7 +222,7 @@ sub readConfig(;$) {
 
                 # user options
                 if (defined $aData[4]) {
-                    if ($aData[4] =~ /i(?:nclude)*\s*:\s*(.*)/i) {
+                    if ($aData[4] =~ /redirect\s*:\s*(.*)/i) {
                         $rUser->{auto_include} = $1;
                     }
                 }
@@ -197,7 +236,7 @@ sub readConfig(;$) {
 
         # trigger tag
         if (/\btrigger\s*:\s*(.*)$/i) {
-            $sInfo = $1;
+            $sInfo    = $1;
             $sSection = 'trigger';
 
             if ($sInfo) {
@@ -238,7 +277,7 @@ sub readConfig(;$) {
             next;
         }
 
-        # trigger user 
+        # trigger user
         if (/\b(?:trig_user)\s*:\s*(.+)/i) {
             my $iValue = $1;
 
@@ -252,7 +291,7 @@ sub readConfig(;$) {
             next;
         }
 
-        # trigger command 
+        # trigger command
         if (/\b(?:trig_command)\s*:\s*(.+)/i) {
             my $iValue = $1;
 
@@ -266,10 +305,9 @@ sub readConfig(;$) {
             next;
         }
 
-
         # alias tag
         if (/\balias\s*:\s*(\S*)/i) {
-            $sInfo = $1;
+            $sInfo    = $1;
             $sSection = 'alias';
 
             if ($sInfo) {
@@ -387,7 +425,6 @@ sub readConfig(;$) {
             next;
         }
 
-
         # alert email
         if (/\b(?:ae|alert_email)\s*:\s*(.+)/i) {
             my $sValue = $1;
@@ -402,10 +439,9 @@ sub readConfig(;$) {
             next;
         }
 
-
         # escalation tag
         if (/\bescalation\s*:\s*(\S*)/i) {
-            $sInfo = $1;
+            $sInfo    = $1;
             $sSection = 'escalation';
 
             if ($sInfo) {
@@ -448,8 +484,8 @@ sub readConfig(;$) {
 
         # escalation: s: line
         if (/\b(?:s|sched|schedule)\s*:\s*(\d{8})\W+(.+)$/i) {
-            my $sDate = $1;
-            my $sSched = $2;
+            my $sDate               = $1;
+            my $sSched              = $2;
             my $iStartingErrorCount = $iErrors;
 
             if ($sSection eq 'escalation') {
@@ -467,7 +503,7 @@ sub readConfig(;$) {
                 }
                 elsif ($sSched =~ /^\s*(\w+)\s*$/) {
                     my $sPerson = $1;
-                   
+
                     unless (DSPS_User::matchUserByRegex($sPerson)) {
                         print infoLog("configuration error - " . $rStruct->{name} . " schedule $sDate references undefined person $sPerson $sLineNum");
                         ++$iErrors;
@@ -479,7 +515,7 @@ sub readConfig(;$) {
                 }
 
                 if ($iStartingErrorCount == $iErrors) {
-                    my %hSchedule = %{$rStruct->{schedule}}; 
+                    my %hSchedule = %{ $rStruct->{schedule} };
                     $hSchedule{$sDate} = $sSched;
                     $rStruct->{schedule} = \%hSchedule;
                     debugLog(D_configRead, "adding " . $rStruct->{name} . " $sDate schedule as $sSched (now " . keys(%hSchedule) . " entries) $sLineNum");
@@ -494,7 +530,7 @@ sub readConfig(;$) {
 
         # command permission line
         if (/\b(?:cmd|command)\s*:\s*([?:]\w+)\D+(\d+)/i) {
-            my $sCmd = $1;
+            my $sCmd   = $1;
             my $iValue = $2;
 
             if (defined $DSPS_CmdPermission::hDefaultCmdPermission{$sCmd}) {
@@ -516,7 +552,7 @@ sub readConfig(;$) {
         # general configuration x: line
         if (/\b(?:sys|system)\s*:\s*([^:]+)\s*:\s*(.+)/i) {
             my $sOption = $1;
-            my $sValue = $2;
+            my $sValue  = $2;
 
             foreach my $sDirective (@aValueDirectives) {
                 if ($sOption =~ /$sDirective/i) {
@@ -528,7 +564,7 @@ sub readConfig(;$) {
 
             foreach my $sDirective (@aBoolDirectives) {
                 if ($sOption =~ /$sDirective/i) {
-                    $g_hConfigOptions{$sDirective} = ($sValue =~ /y|t|1|enable|on/i ? 1: 0);;
+                    $g_hConfigOptions{$sDirective} = ($sValue =~ /y|t|1|enable|on/i ? 1 : 0);
                     next LINE;
                 }
             }
@@ -539,20 +575,20 @@ sub readConfig(;$) {
     }
 
     close(CFG);
-    return(!$iErrors);
+    return (!$iErrors);
 }
 
 
 
 sub writeConfig() {
-   my $sConfigFileName = shift || "$sConfigPath/dsps.conf";
-    open(CFG, $sConfigFileName) || return 0;
+    my $sConfigFileName = shift || "$sConfigPath/dsps.conf";
+    open(CFG, $sConfigFileName)        || return 0;
     open(NEW, ">$sConfigFileName.new") || return infoLog("Unable to write new config file ($sConfigFileName.new)");
 
-    my $sSection = '';
-    my $sInfo = '';
+    my $sSection       = '';
+    my $sInfo          = '';
     my $bFoundSchedule = 0;
-    my $sIndent = '';
+    my $sIndent        = '';
 
     while (<CFG>) {
         chomp();
@@ -569,8 +605,8 @@ sub writeConfig() {
         }
 
         if (/^\s*escalation\s*:\s*(\S+)/i) {
-            $sSection = 'escalation';
-            $sInfo = $1;
+            $sSection       = 'escalation';
+            $sInfo          = $1;
             $bFoundSchedule = 0;
         }
 
@@ -578,7 +614,7 @@ sub writeConfig() {
 
             unless ($bFoundSchedule) {
                 debugLog(D_configWrite, "rewriting schedule for escalation $sInfo");
-                my %hSchedule = %{$g_hEscalations{$sInfo}->{schedule}};
+                my %hSchedule = %{ $g_hEscalations{$sInfo}->{schedule} };
                 foreach my $sDate (sort keys %hSchedule) {
                     print NEW "${sIndent}s:$sDate " . $hSchedule{$sDate} . "\n";
                 }
@@ -595,7 +631,7 @@ sub writeConfig() {
     close(NEW);
 
     unlink("$sConfigFileName.bck");
-    rename("$sConfigFileName", "$sConfigFileName.bck");
+    rename("$sConfigFileName",     "$sConfigFileName.bck");
     rename("$sConfigFileName.new", "$sConfigFileName");
 
     debugLog(D_configWrite, "saved new configuration file $sConfigFileName");
