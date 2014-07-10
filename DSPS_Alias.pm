@@ -9,18 +9,21 @@ our @EXPORT = ('%g_hAliases');
 
 our %g_hAliases;
 
+
+
 sub createAlias {
     my $rhAlias = {
-        name => $_[0],
+        name     => $_[0],
         referent => $_[1],
-        hidden => $_[2],
+        hidden   => $_[2],
     };
 
-    $g_hAliases{$_[0]} = $rhAlias;
+    $g_hAliases{ $_[0] } = $rhAlias;
     debugLog(D_users, "creating alias $_[0]");
 
     return $rhAlias;
 }
+
 
 
 sub visibleAliases() {

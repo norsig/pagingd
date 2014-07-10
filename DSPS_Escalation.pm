@@ -19,16 +19,16 @@ our %g_hEscalations;
 
 sub createEscalation {
     my $rhEsc = {
-        name           => $_[0],
-        timer          => $_[1] || 300,
-        escalate_to    => $_[2] || '',
-        rt_queue       => $_[3] || '',
-        rt_subject     => '',
-        min_to_abort   => 2,
-        cancel_msg     => '',
-        schedule       => {},
-        alert_subject  => '',
-        alert_email    => '',
+        name          => $_[0],
+        timer         => $_[1] || 300,
+        escalate_to   => $_[2] || '',
+        rt_queue      => $_[3] || '',
+        rt_subject    => '',
+        min_to_abort  => 2,
+        cancel_msg    => '',
+        schedule      => {},
+        alert_subject => '',
+        alert_email   => '',
     };
 
     $g_hEscalations{ $_[0] } = $rhEsc;
@@ -43,15 +43,14 @@ sub primeEscalation($$$) {
     # put the oncall peson in a room with the sender
     my $bRoomChanged = DSPS_Room::combinePeoplesRooms($g_hUsers{$sSender}, $g_hUsers{$iOncallPhone});
     my $iRoom = DSPS_Room::findUsersRoom($iOncallPhone);
-    
+
     # never prime an escalation off of a recovery page
     return $bRoomChanged if (main::getRecoveryRegex() && $sMessage =~ main::getRecoveryRegex());
 
     # are there enough other people in the room to skip the escalation?
     my $iOccupants = () = DSPS_Room::roomStatus($iRoom, 1, 1);
     if ($iOccupants >= $g_hEscalations{$sEscName}->{min_to_abort}) {
-        infoLog($g_hUsers{$iOncallPhone}->{name} . " is already in room $iRoom which has $iOccupants people" .
-            " - aborting $sEscName escalation");
+        infoLog($g_hUsers{$iOncallPhone}->{name} . " is already in room $iRoom which has $iOccupants people" . " - aborting $sEscName escalation");
         return $bRoomChanged;
     }
 
@@ -75,29 +74,37 @@ sub primeEscalation($$$) {
     # the "minus 60 seconds" here is so we have time to resend the initial page to the on call person a second time (just to be nice) before
     # we actually esclate.  logic is in checkEscalationTimes().
     # the -1 is to offset race conditions so we don't miss a full sleep/select cycle in th emain loop
-    $g_hRooms{$iRoom}->{escalation_time} = time() + $g_hEscalations{$sEscName}->{timer} - 1 - ($g_hEscalations{$sEscName}->{timer} >= 60 ? 60 : 0);
-    $g_hRooms{$iRoom}->{escalation_to} = $g_hEscalations{$sEscName}->{escalate_to};
+    $g_hRooms{$iRoom}->{escalation_time}        = time() + $g_hEscalations{$sEscName}->{timer} - 1 - ($g_hEscalations{$sEscName}->{timer} >= 60 ? 60 : 0);
+    $g_hRooms{$iRoom}->{escalation_to}          = $g_hEscalations{$sEscName}->{escalate_to};
     $g_hRooms{$iRoom}->{escalation_orig_sender} = $sSender;
-    $g_hRooms{$iRoom}->{escalation_name} = $sEscName;
+    $g_hRooms{$iRoom}->{escalation_name}        = $sEscName;
 
     # do we need to create an RT ticket?
     if ($g_hEscalations{$sEscName}->{rt_queue}) {
-        $g_hRooms{$iRoom}->{ticket_number} = main::rtCreateTicket($sMessage, $g_hEscalations{$sEscName}->{rt_queue},
-            defined($g_hEscalations{$sEscName}->{rt_subject}) ? $g_hEscalations{$sEscName}->{rt_subject} : 'DSPS Ticket');
+        $g_hRooms{$iRoom}->{ticket_number} = main::rtCreateTicket(
+            $sMessage,
+            $g_hEscalations{$sEscName}->{rt_queue},
+            defined($g_hEscalations{$sEscName}->{rt_subject}) ? $g_hEscalations{$sEscName}->{rt_subject} : 'DSPS Ticket'
+        );
     }
 
     # send out an alert email if configured
     if ($g_hEscalations{$sEscName}->{alert_email}) {
-        my $sRTSuffix = "\n\n----\nThis event is being tracked in RT ticket #" . $g_hRooms{$iRoom}->{ticket_number} . "\n" .
-            (main::getRTLink() ? main::getRTLink()  . $g_hRooms{$iRoom}->{ticket_number} : '');
+        my $sRTSuffix =
+            "\n\n----\nThis event is being tracked in RT ticket #"
+          . $g_hRooms{$iRoom}->{ticket_number} . "\n"
+          . (main::getRTLink() ? main::getRTLink() . $g_hRooms{$iRoom}->{ticket_number} : '');
         my $sSubject = $g_hEscalations{$sEscName}->{alert_subject} ? $g_hEscalations{$sEscName}->{alert_subject} : 'DSPS Escalation!';
 
-        main::sendEmail($g_hEscalations{$sEscName}->{alert_email}, '', sv(E_EscalationPrep3, $sSubject, $sEscName, $sMessage) .
-            ($g_hEscalations{$sEscName}->{rt_queue} ? $sRTSuffix : ''));
+        main::sendEmail($g_hEscalations{$sEscName}->{alert_email}, '', sv(E_EscalationPrep3, $sSubject, $sEscName, $sMessage) . ($g_hEscalations{$sEscName}->{rt_queue} ? $sRTSuffix : ''));
     }
 
-    infoLog("escalation timer of " . $g_hEscalations{$sEscName}->{timer} . " seconds started for room $iRoom via $sEscName (" .
-        $g_hUsers{$iOncallPhone}->{name} . ' -> ' . $g_hRooms{$iRoom}->{escalation_to} .")");
+    infoLog("escalation timer of "
+          . $g_hEscalations{$sEscName}->{timer}
+          . " seconds started for room $iRoom via $sEscName ("
+          . $g_hUsers{$iOncallPhone}->{name} . ' -> '
+          . $g_hRooms{$iRoom}->{escalation_to}
+          . ")");
 
     return $bRoomChanged;
 }
@@ -112,29 +119,29 @@ sub getScheduledOncallPerson($;$) {
 
     my %hSchedule = %{ $g_hEscalations{$sEscName}->{schedule} };
 
-    my ( $iMinute, $iHour, $iDay, $iMonth, $iYear ) = (localtime)[ 1 .. 5 ];
-    my $iToday = sprintf( "%d%02d%02d", $iYear + 1900, $iMonth + 1, $iDay );
+    my ($iMinute, $iHour, $iDay, $iMonth, $iYear) = (localtime)[1 .. 5];
+    my $iToday = sprintf("%d%02d%02d", $iYear + 1900, $iMonth + 1, $iDay);
 
     my $iPersonPhone;
-    foreach ( sort keys %hSchedule ) {
-        my $iTodayPlus = $iPlusDays ? time2str( "%Y%m%d", ( str2time( substr( $iToday, 0, 8 ) ) + ( 86400 * $iPlusDays ) ) ) : $iToday;
+    foreach (sort keys %hSchedule) {
+        my $iTodayPlus = $iPlusDays ? time2str("%Y%m%d", (str2time(substr($iToday, 0, 8)) + (86400 * $iPlusDays))) : $iToday;
 
-        if ( $iTodayPlus >= $_ ) {
+        if ($iTodayPlus >= $_) {
 
-            if ( $hSchedule{$_} =~ /^auto/i ) {
+            if ($hSchedule{$_} =~ /^auto/i) {
                 my $sThisSched   = $hSchedule{$_};
                 my @aOnCallNames = ();
 
-                while ( $sThisSched =~ m,(\w+),g ) {
-                    next if ( $1 =~ /^auto$/i );
+                while ($sThisSched =~ m,(\w+),g) {
+                    next if ($1 =~ /^auto$/i);
                     my $sSchedPerson = $1;
-                    my $iPhone = DSPS_User::matchUserByRegex($sSchedPerson);
-                    push( @aOnCallNames, $iPhone);
+                    my $iPhone       = DSPS_User::matchUserByRegex($sSchedPerson);
+                    push(@aOnCallNames, $iPhone);
                 }
-                return '' if ( $#aOnCallNames < 0 );
+                return '' if ($#aOnCallNames < 0);
 
-                my $iDiff = sprintf( "%.0f", ( ( ( 86400 * $iPlusDays ) + str2time( substr( $iToday, 0, 8 ) ) - str2time( substr( $_, 0, 8 ) ) ) / 86400 ) );
-                $iPersonPhone = $aOnCallNames[ int( $iDiff / 7 ) % ( $#aOnCallNames + 1 ) ];
+                my $iDiff = sprintf("%.0f", (((86400 * $iPlusDays) + str2time(substr($iToday, 0, 8)) - str2time(substr($_, 0, 8))) / 86400));
+                $iPersonPhone = $aOnCallNames[int($iDiff / 7) % ($#aOnCallNames + 1)];
                 last;
             }
             else {
@@ -152,10 +159,10 @@ sub getScheduledOncallPerson($;$) {
 
 
 sub getOncallPerson($;$) {
-    my $sEscName = shift;
+    my $sEscName  = shift;
     my $iPlusDays = shift || 0;
-    my $iNow = time();
-    my $iWeeks = -1;
+    my $iNow      = time();
+    my $iWeeks    = -1;
     my $iPhone;
 
     # lookup the oncall person for this particular escalation.  if that person is currently
@@ -176,18 +183,18 @@ sub getFullOncallSchedule($) {
     return 'None.' unless defined $g_hEscalations{$sEscName}->{schedule};
 
     my $iWeeksShown = 0;
-    my %hSchedule = %{$g_hEscalations{$sEscName}->{schedule}};
-    my ($iMinute, $iHour, $iDay, $iMonth, $iYear) = (localtime)[1..5];
-    my $iToday = sprintf("%d%02d%02d", $iYear+1900, $iMonth+1, $iDay);
+    my %hSchedule   = %{ $g_hEscalations{$sEscName}->{schedule} };
+    my ($iMinute, $iHour, $iDay, $iMonth, $iYear) = (localtime)[1 .. 5];
+    my $iToday        = sprintf("%d%02d%02d", $iYear + 1900, $iMonth + 1, $iDay);
     my $iTodaySeconds = str2time($iToday);
-    my $sResult = '';
+    my $sResult       = '';
 
     foreach (sort keys %hSchedule) {
 
         if (($hSchedule{$_} =~ /^auto/i) || ($iTodaySeconds) <= str2time($_) + 604000) {
 
             if ($hSchedule{$_} =~ /^auto/i) {
-                my $sThisSched = $hSchedule{$_};
+                my $sThisSched   = $hSchedule{$_};
                 my @aOnCallNames = ();
 
                 while ($sThisSched =~ m,(\w+),g) {
@@ -200,7 +207,7 @@ sub getFullOncallSchedule($) {
                 while (1) {
                     $iPlusWeek++;
                     my $iDiff = sprintf("%.0f", 7 * $iPlusWeek);
-                    my $iPersonPhone = $aOnCallNames[int($iDiff/7) % ($#aOnCallNames + 1)];
+                    my $iPersonPhone = $aOnCallNames[int($iDiff / 7) % ($#aOnCallNames + 1)];
                     my $iNewDay = str2time($_) + ($iPlusWeek * ONEWEEK);
 
                     next unless ($iNewDay + 604000 >= $iTodaySeconds);
@@ -213,7 +220,7 @@ sub getFullOncallSchedule($) {
                 last;
             }
             else {
-                my $sEntry = $hSchedule{$_};
+                my $sEntry       = $hSchedule{$_};
                 my $iPersonPhone = DSPS_User::matchUserByRegex($sEntry);
                 $sResult .= time2str("%x", str2time($_)) . ": " . $g_hUsers{$iPersonPhone}->{name} . "\n";
                 $iWeeksShown++;
@@ -231,26 +238,27 @@ sub checkEscalationCancel($$) {
     my $iRoom = DSPS_Room::findUsersRoom($iSender);
 
     if ($iRoom && ($g_hRooms{$iRoom}->{escalation_time} > time())) {
-        
+
         # we can cacnel an escalation for this room if a human replied
         # or nagios sent a recovery message
-        if (DSPS_User::humanUsersPhone($iSender) || 
-            (main::getRecoveryRegex() && $sMessage =~ main::getRecoveryRegex())) {
+        if (DSPS_User::humanUsersPhone($iSender)
+            || (main::getRecoveryRegex() && $sMessage =~ main::getRecoveryRegex()))
+        {
             my $sEscName = $g_hRooms{$iRoom}->{escalation_name};
-            
+
             $g_hRooms{$iRoom}->{escalation_time} = 0;
-            $g_hRooms{$iRoom}->{escalation_to} = '';
+            $g_hRooms{$iRoom}->{escalation_to}   = '';
             $g_hRooms{$iRoom}->{escalation_name} = '';
 
             if (DSPS_User::humanUsersPhone($iSender)) {
                 infoLog("escalation for room $iRoom canceled by " . $g_hUsers{$iSender}->{name});
                 main::sendSmsPage($iSender, t($g_hEscalations{$sEscName}->{cancel_msg}))
-                    if (defined $g_hEscalations{$sEscName}) && ($g_hEscalations{$sEscName}->{cancel_msg});
+                  if (defined $g_hEscalations{$sEscName}) && ($g_hEscalations{$sEscName}->{cancel_msg});
 
             }
             else {
                 infoLog("escalation for room $iRoom canceled by recovery");
-                return 1;  # means we need to modify the message with a '-' prefix
+                return 1;    # means we need to modify the message with a '-' prefix
             }
         }
     }
@@ -264,10 +272,11 @@ sub checkEscalationTimes() {
     my $iNow = time();
 
     foreach my $iRoom (keys %g_hRooms) {
+
         # skip rooms with no escalation timer or where the timer hasn't expired yet
         next unless ($g_hRooms{$iRoom}->{escalation_time} && ($g_hRooms{$iRoom}->{escalation_time} <= $iNow));
 
-        my $sLastMessage = ${$g_hRooms{$iRoom}->{history}}[$#{$g_hRooms{$iRoom}->{history}}];
+        my $sLastMessage = ${ $g_hRooms{$iRoom}->{history} }[$#{ $g_hRooms{$iRoom}->{history} }];
         unless ($sLastMessage) {
             infoLog("ERROR: escalation timer expired for room $iRoom but there's no history to send");
             next;
@@ -281,13 +290,13 @@ sub checkEscalationTimes() {
         # our initial timer was internaly set to 60 seconds less than the admin configured it.  so at this point
         # we have a minute left before the real timer expires.  now we're going to re-send the initial page to give
         # the on call person a second attempt *before* we actually escalate.  we distinguish between "timer expired
-        # but we actually have this 1 minute left" and "real timer expired" by fudging the expiration time with a 
+        # but we actually have this 1 minute left" and "real timer expired" by fudging the expiration time with a
         # decimal number.  if a decimal is in the expiration time, then it's the real timer that's up.  otherwise
         # we resend the last warning and reset the timer for [nearly] 1 more minute
         unless ($g_hRooms{$iRoom}->{escalation_time} =~ /\./) {
 
             # about one more minute
-            $g_hRooms{$iRoom}->{escalation_time} = time() + 59.1;            
+            $g_hRooms{$iRoom}->{escalation_time} = time() + 59.1;
 
             # resend the initial page to the on call person one last time
             main::sendUserMessageToRoom($g_hRooms{$iRoom}->{escalation_orig_sender}, $sLastMessage, 0);
@@ -298,17 +307,17 @@ sub checkEscalationTimes() {
 
         # add the extra escalation people to the room
         main::processMentions($g_hRooms{$iRoom}->{escalation_orig_sender}, $g_hRooms{$iRoom}->{escalation_to}, $g_hRooms{$iRoom}->{escalation_to});
-        
-        my $sOrigSender = $g_hRooms{$iRoom}->{escalation_orig_sender};
+
+        my $sOrigSender  = $g_hRooms{$iRoom}->{escalation_orig_sender};
         my $sOrigEscName = $g_hRooms{$iRoom}->{escalation_name};
-        my $sOrigTo = $g_hRooms{$iRoom}->{escalation_to};
-        
+        my $sOrigTo      = $g_hRooms{$iRoom}->{escalation_to};
+
         # clear the escalation so it doesn't fire again
         # we do this before sendUserMessageToRoom() so that the sending function will know there's no more
         # pending escalation and therefore won't prepend a '+' to the message.
         # and we do it after the above processMentions() so it doesn't recursively setup another escalation - it will see this one in progress
         $g_hRooms{$iRoom}->{escalation_time} = 0;
-        $g_hRooms{$iRoom}->{escalation_to} = '';
+        $g_hRooms{$iRoom}->{escalation_to}   = '';
         $g_hRooms{$iRoom}->{escalation_name} = '';
 
         # send out the pages
@@ -316,12 +325,14 @@ sub checkEscalationTimes() {
 
         # send out a second email if configured
         if ($g_hEscalations{$sOrigEscName}->{alert_email}) {
-            my $sRTSuffix = "\n\n----\nThis event is being tracked in RT ticket #" . $g_hRooms{$iRoom}->{ticket_number} . "\n" .
-                (main::getRTLink() ? main::getRTLink()  . $g_hRooms{$iRoom}->{ticket_number} : '');
+            my $sRTSuffix =
+                "\n\n----\nThis event is being tracked in RT ticket #"
+              . $g_hRooms{$iRoom}->{ticket_number} . "\n"
+              . (main::getRTLink() ? main::getRTLink() . $g_hRooms{$iRoom}->{ticket_number} : '');
             my $sSubject = ($g_hEscalations{$sOrigEscName}->{alert_subject} ? $g_hEscalations{$sOrigEscName}->{alert_subject} : 'DSPS Escalation!') . ' - ESCALATED!';
 
-            main::sendEmail($g_hEscalations{$sOrigEscName}->{alert_email}, '', sv(E_EscalationEsc4, $sSubject, $sOrigEscName, $sOrigTo, $sLastMessage) .
-                ($g_hEscalations{$sOrigEscName}->{rt_queue} ? $sRTSuffix : ''));
+            main::sendEmail($g_hEscalations{$sOrigEscName}->{alert_email},
+                '', sv(E_EscalationEsc4, $sSubject, $sOrigEscName, $sOrigTo, $sLastMessage) . ($g_hEscalations{$sOrigEscName}->{rt_queue} ? $sRTSuffix : ''));
 
         }
     }
@@ -339,7 +350,7 @@ sub findUsersSchedules($) {
     foreach my $sEscName (keys %g_hEscalations) {
 
         if (defined $g_hEscalations{$sEscName}->{schedule}) {
-            my %hSchedule = %{$g_hEscalations{$sEscName}->{schedule}};
+            my %hSchedule = %{ $g_hEscalations{$sEscName}->{schedule} };
 
             foreach my $sDate (keys %hSchedule) {
 
@@ -353,7 +364,6 @@ sub findUsersSchedules($) {
 
     return @aScheds;
 }
-
 
 # a user can be part of multiple escalations, each with it's own emails.
 # collect them all
@@ -374,10 +384,10 @@ sub getUsersEscalationsEmails($) {
 
 
 sub swapSchedules($$;$) {
-    my $iSender = shift;
+    my $iSender     = shift;
     my $sSwapeeName = shift;
-    my $sTargetEsc = shift || '';
-    my $iSwapee = DSPS_User::matchUserByRegex($sSwapeeName);
+    my $sTargetEsc  = shift || '';
+    my $iSwapee     = DSPS_User::matchUserByRegex($sSwapeeName);
 
     # we need to determine if the two swapping users share a common oncall schedule
     my @aSenderEsc = findUsersSchedules($iSender);
@@ -409,7 +419,7 @@ sub swapSchedules($$;$) {
         foreach my $sMatch (@aMatches) {
             if ($sMatch =~ /^$sTargetEsc$/i) {
                 $sTargetEsc = $sMatch;
-                $bSuccess = 1;
+                $bSuccess   = 1;
                 last;
             }
         }
@@ -424,19 +434,19 @@ sub swapSchedules($$;$) {
 
     # by this point we know which escalation schedule ($sTargetEsc) we're doing the swap in.  it's a go!
     debugLog(D_escalations, "schedule swap of $sTargetEsc requested by " . $g_hUsers{$iSender}->{name} . " with $sSwapeeName");
-    my %hSchedule = %{$g_hEscalations{$sTargetEsc}->{schedule}};
+    my %hSchedule = %{ $g_hEscalations{$sTargetEsc}->{schedule} };
 
     # build a searchable schedule hash
-    my ($iMinute, $iHour, $iDay, $iMonth, $iYear) = (localtime)[1..5];
-    my $iToday = sprintf("%d%02d%02d", $iYear+1900, $iMonth+1, $iDay);
+    my ($iMinute, $iHour, $iDay, $iMonth, $iYear) = (localtime)[1 .. 5];
+    my $iToday = sprintf("%d%02d%02d", $iYear + 1900, $iMonth + 1, $iDay);
     my $iTodaySeconds = str2time($iToday);
     my %hFullSchedule;
     my @aAuto;
 
     foreach (sort keys %hSchedule) {
 
-       if (($hSchedule{$_} =~ /^auto/i) || ($iTodaySeconds <= str2time($_) + 604000)) {
-            my $iDateSeconds = str2time($_);
+        if (($hSchedule{$_} =~ /^auto/i) || ($iTodaySeconds <= str2time($_) + 604000)) {
+            my $iDateSeconds        = str2time($_);
             my $iNumberPeopleInAuto = 0;
 
             if ($hSchedule{$_} =~ /^auto/i) {
@@ -451,7 +461,7 @@ sub swapSchedules($$;$) {
 
                         if (my $iFoundUser = DSPS_User::matchUserByRegex($sSchedPerson)) {
                             $hFullSchedule{$iDateSeconds} = $iFoundUser;
-                            $iDateSeconds += ONEWEEK;  # advance a week
+                            $iDateSeconds += ONEWEEK;    # advance a week
                             push(@aAuto, $iFoundUser) unless $bAutoArrayDone;
                         }
                     }
@@ -507,10 +517,13 @@ sub swapSchedules($$;$) {
         $bFail = 0;
 
         foreach my $iIndex (1 .. scalar(@aAuto)) {
+
             #print "   - looking at $iIndex on $iDay " . time2str("%x", $iDay + (($iIndex - 1) * ONEWEEK)) . "\n";
-            last unless defined($hFullSchedule{$iDay + (($iIndex - 1) * ONEWEEK)});
+            last unless defined($hFullSchedule{ $iDay + (($iIndex - 1) * ONEWEEK) });
+
             #print "     - looking at " . $hFullSchedule{$iDay + (($iIndex - 1) * ONEWEEK)} . "\n";
             next if ($aAuto[$iIndex - 1] =~ /$hFullSchedule{$iDay + (($iIndex - 1) * ONEWEEK)}/i);
+
             #print "     - failed\n";
             $bFail = 1;
             last;
@@ -526,7 +539,7 @@ sub swapSchedules($$;$) {
         my @aTemp = sort keys %hFullSchedule;
         $iAutoDate = $aTemp[$#aTemp] + ONEWEEK;
         $hFullSchedule{$iAutoDate} = $aAuto[0];
-    } 
+    }
 
     # update the running schedule with our new one
     %hSchedule = ();
@@ -537,11 +550,11 @@ sub swapSchedules($$;$) {
             for my $sAutoEntry (@aAuto) {
                 $sAutoList .= (length($sAutoList) ? ',' : '') . $g_hUsers{$sAutoEntry}->{name};
             }
-            $hSchedule{time2str("%Y%m%d", $iDay)} = "auto/$sAutoList";
+            $hSchedule{ time2str("%Y%m%d", $iDay) } = "auto/$sAutoList";
             last;
         }
         else {
-            $hSchedule{time2str("%Y%m%d", $iDay)} = $g_hUsers{$hFullSchedule{$iDay}}->{name};
+            $hSchedule{ time2str("%Y%m%d", $iDay) } = $g_hUsers{ $hFullSchedule{$iDay} }->{name};
         }
     }
     $g_hEscalations{$sTargetEsc}->{schedule} = \%hSchedule;
@@ -549,10 +562,9 @@ sub swapSchedules($$;$) {
     main::sendSmsPage($iSender, t(getFullOncallSchedule($sTargetEsc)));
     main::sendSmsPage($iSender, t(S_ScheduleSwap1, $g_hUsers{$iSwapee}->{name}));
 
-    main::sendEmail($g_hEscalations{$sTargetEsc}->{swap_email}, main::getAdminEmail(),
-        sv(E_SwapSuccess4, $g_hUsers{$iSender}->{name}, $g_hUsers{$iSwapee}->{name}, $sTargetEsc, getFullOncallSchedule($sTargetEsc)));
+    main::sendEmail($g_hEscalations{$sTargetEsc}->{swap_email},
+        main::getAdminEmail(), sv(E_SwapSuccess4, $g_hUsers{$iSender}->{name}, $g_hUsers{$iSwapee}->{name}, $sTargetEsc, getFullOncallSchedule($sTargetEsc)));
 }
-
 
 1;
 

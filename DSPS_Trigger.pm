@@ -14,18 +14,19 @@ our @EXPORT = ('%g_hTriggers', 'createOrReplaceTrigger', 'checkAllTriggers', 'tr
 our %g_hTriggers;
 
 
+
 sub createOrReplaceTrigger {
     my $rhTrig = {
-        name                => $_[0],
-        message_to_users    => $_[1],
-        event_match_string  => $_[2],
-        required_user       => $_[3],
-        command             => $_[4],
-        locked              => 0,
-        last_tripped        => 0,
+        name               => $_[0],
+        message_to_users   => $_[1],
+        event_match_string => $_[2],
+        required_user      => $_[3],
+        command            => $_[4],
+        locked             => 0,
+        last_tripped       => 0,
     };
 
-    $g_hTriggers{$_[0]} = $rhTrig;
+    $g_hTriggers{ $_[0] } = $rhTrig;
 }
 
 
@@ -34,16 +35,20 @@ sub listTriggers() {
     my $sResult = '';
 
     foreach my $sTrig (sort keys %g_hTriggers) {
-        $sResult .= ($sResult ? "\n" : '') . ($g_hTriggers{$sTrig}->{locked} ? '-' : '+') . "$sTrig" . ($g_hTriggers{$sTrig}->{last_tripped} ? (' (' . prettyDateTime($g_hTriggers{$sTrig}->{last_tripped}) . ')') : '');
+        $sResult .=
+            ($sResult                       ? "\n" : '')
+          . ($g_hTriggers{$sTrig}->{locked} ? '-'  : '+')
+          . "$sTrig"
+          . ($g_hTriggers{$sTrig}->{last_tripped} ? (' (' . prettyDateTime($g_hTriggers{$sTrig}->{last_tripped}) . ')') : '');
     }
 
-    return("Triggers:\n" . ($sResult ? $sResult : '  None.'));
+    return ("Triggers:\n" . ($sResult ? $sResult : '  None.'));
 }
 
 
 
 sub armTriggers($) {
-    my $sRegex = shift;
+    my $sRegex  = shift;
     my $sResult = '';
 
     foreach my $sTrig (sort keys %g_hTriggers) {
@@ -64,7 +69,7 @@ sub armTriggers($) {
 
 
 sub disarmTriggers($) {
-    my $sRegex = shift;
+    my $sRegex  = shift;
     my $sResult = '';
 
     foreach my $sTrig (sort keys %g_hTriggers) {
@@ -85,31 +90,31 @@ sub disarmTriggers($) {
 
 
 sub checkAllTriggers($$) {
-    my $iUser = shift;
+    my $iUser    = shift;
     my $sMessage = shift;
 
     foreach my $sTrig (keys %g_hTriggers) {
 
         # does the user match
-        if ($g_hUsers{$iUser}->{name} eq $g_hTriggers{$sTrig}->{required_user}) { 
+        if ($g_hUsers{$iUser}->{name} eq $g_hTriggers{$sTrig}->{required_user}) {
 
             # does the message match
             my $sRegex = $g_hTriggers{$sTrig}->{event_match_string};
             if (my @aBackRefs = ($sMessage =~ /$sRegex/is)) {
 
                 # setup trigger variables and interpolate regexes from the message
-                my $sName = $g_hTriggers{$sTrig}->{name};
+                my $sName           = $g_hTriggers{$sTrig}->{name};
                 my $sMessageToUsers = $g_hTriggers{$sTrig}->{message_to_users};
-                my $sCommand = $g_hTriggers{$sTrig}->{command};
-                $sMessageToUsers =~ s/(?<!\\)\$(\d+)/$aBackRefs[$1 - 1]/g; 
-                $sCommand =~ s/(?<!\\)\$(\d+)/$aBackRefs[$1 - 1]/g; 
+                my $sCommand        = $g_hTriggers{$sTrig}->{command};
+                $sMessageToUsers =~ s/(?<!\\)\$(\d+)/$aBackRefs[$1 - 1]/g;
+                $sCommand =~ s/(?<!\\)\$(\d+)/$aBackRefs[$1 - 1]/g;
 
                 # PROBLEM
                 if ($sMessage =~ main::getProblemRegex()) {
 
                     # if not already locked then we have an armed trigger successfully triggered
                     if (!$g_hTriggers{$sTrig}->{locked}) {
-                        $g_hTriggers{$sTrig}->{locked} = 1;
+                        $g_hTriggers{$sTrig}->{locked}       = 1;
                         $g_hTriggers{$sTrig}->{last_tripped} = time();
 
                         debugLog(D_trigger, "matched $sName; $sMessageToUsers");
@@ -128,6 +133,7 @@ sub checkAllTriggers($$) {
 
                     $g_hTriggers{$sTrig}->{locked} = 0;
                     main::sendCustomSystemMessageToRoom($iUser, "DSPS Trigger $sName: rearmed.", 1);
+
                     # NOTE: Don't change the syntax of the above string without making the same update
                     # to the regex in DSPS_User::blockedByFilter().
                 }
@@ -138,6 +144,7 @@ sub checkAllTriggers($$) {
 }
 
 
+
 sub triggerStatus() {
     my $sResult = '';
 
@@ -145,9 +152,8 @@ sub triggerStatus() {
         my $sLast = $g_hTriggers{$sTrig}->{last_tripped};
         $sResult .= "Trigger '$sTrig' is " . ($g_hTriggers{$sTrig}->{locked} ? 'locked' : 'armed') . ($sLast ? " [" . prettyDateTime($sLast) . "]" : '') . ".\n";
     }
-    
+
     return $sResult;
 }
-
 
 1;

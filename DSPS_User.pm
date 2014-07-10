@@ -16,33 +16,35 @@ my %hDedupeByMessage;
 my $iLastDedupeMaintTime = 0;
 
 
-sub createUser {
-	my $rhUser = {
-		name => $_[0],
-		regex => $_[1],
-		phone => $_[2],
-        group => $_[3],
-		access_level => $_[4] || 0,
-        auto_include => '',
-        macros => {},
-		filter_recoveries => 0,
-		vacation_end => 0,
-		auto_reply_text => '',
-		auto_reply_expire => 0,
-        throttle => 0,
-	};
 
-    $g_hUsers{$_[2]} = $rhUser;
+sub createUser {
+    my $rhUser = {
+        name              => $_[0],
+        regex             => $_[1],
+        phone             => $_[2],
+        group             => $_[3],
+        access_level      => $_[4] || 0,
+        auto_include      => '',
+        macros            => {},
+        filter_recoveries => 0,
+        vacation_end      => 0,
+        auto_reply_text   => '',
+        auto_reply_expire => 0,
+        throttle          => 0,
+    };
+
+    $g_hUsers{ $_[2] } = $rhUser;
     debugLog(D_users, "created $_[0] ($_[2]) of $_[3]");
 
     return $rhUser;
 }
 
 
+
 sub previouslySentTo($$) {
-    my $iSender = shift;
+    my $iSender  = shift;
     my $sMessage = shift;
-    my $iNow = time();
+    my $iNow     = time();
 
     if (defined $hDedupeByMessage{$sMessage}) {
         if ($hDedupeByMessage{$sMessage} =~ /\b$iSender:(\d+)\b/) {
@@ -59,6 +61,7 @@ sub previouslySentTo($$) {
 }
 
 
+
 sub getAutoReply($) {
     my $iUser = shift;
 
@@ -69,7 +72,7 @@ sub getAutoReply($) {
         else {
             infoLog("auto reply for user " . $g_hUsers{$iUser}->{name} . " has expired; deleting.");
             $g_hUsers{$iUser}->{auto_reply_expire} = 0;
-            $g_hUsers{$iUser}->{auto_reply_text} = '';
+            $g_hUsers{$iUser}->{auto_reply_text}   = '';
         }
     }
 
@@ -84,14 +87,15 @@ sub freezeState() {
     # create a hash of the user configurable settings
     foreach my $iUser (keys %g_hUsers) {
         $hUserState{$iUser}->{filter_recoveries} = $g_hUsers{$iUser}->{filter_recoveries};
-        $hUserState{$iUser}->{vacation_end} = $g_hUsers{$iUser}->{vacation_end};
-        $hUserState{$iUser}->{auto_reply_text} = $g_hUsers{$iUser}->{auto_reply_text};
+        $hUserState{$iUser}->{vacation_end}      = $g_hUsers{$iUser}->{vacation_end};
+        $hUserState{$iUser}->{auto_reply_text}   = $g_hUsers{$iUser}->{auto_reply_text};
         $hUserState{$iUser}->{auto_reply_expire} = $g_hUsers{$iUser}->{auto_reply_expire};
-        $hUserState{$iUser}->{macros} = $g_hUsers{$iUser}->{macros};
+        $hUserState{$iUser}->{macros}            = $g_hUsers{$iUser}->{macros};
     }
 
-   return freeze(%hUserState); 
+    return freeze(%hUserState);
 }
+
 
 
 sub freezeMessageState() {
@@ -99,17 +103,17 @@ sub freezeMessageState() {
 }
 
 
-sub thawMessageState($) { 
+
+sub thawMessageState($) {
     %hDedupeByMessage = thaw(shift);
 }
+
 
 
 sub thawState($) {
     my %hUserState;
 
-    eval { 
-        %hUserState = thaw(shift); 
-    };
+    eval {%hUserState = thaw(shift);};
     return infoLog("Unable to parse user state data - ignoring") if ($@);
 
     foreach my $iUser (keys %hUserState) {
@@ -120,14 +124,15 @@ sub thawState($) {
         # file to fall out of the state data too.
         if (defined $g_hUsers{$iUser}) {
             $g_hUsers{$iUser}->{filter_recoveries} = $hUserState{$iUser}->{filter_recoveries};
-            $g_hUsers{$iUser}->{vacation_end} = $hUserState{$iUser}->{vacation_end};
-            $g_hUsers{$iUser}->{auto_reply_text} = $hUserState{$iUser}->{auto_reply_text};
+            $g_hUsers{$iUser}->{vacation_end}      = $hUserState{$iUser}->{vacation_end};
+            $g_hUsers{$iUser}->{auto_reply_text}   = $hUserState{$iUser}->{auto_reply_text};
             $g_hUsers{$iUser}->{auto_reply_expire} = $hUserState{$iUser}->{auto_reply_expire};
-            $g_hUsers{$iUser}->{macros} = $hUserState{$iUser}->{macros};
+            $g_hUsers{$iUser}->{macros}            = $hUserState{$iUser}->{macros};
             debugLog(D_state, "restored state data for user " . $g_hUsers{$iUser}->{name});
         }
     }
 }
+
 
 
 sub matchUserByName($) {
@@ -149,7 +154,7 @@ sub matchUserByRegex($) {
     my $sName = shift;
 
     foreach my $sPhone (keys %g_hUsers) {
-        if ($sName =~ /\b($g_hUsers{$sPhone}->{regex})\b/i ) {
+        if ($sName =~ /\b($g_hUsers{$sPhone}->{regex})\b/i) {
             return $sPhone;
         }
     }
@@ -176,11 +181,12 @@ sub allGroups() {
     my %hGroups;
 
     foreach my $iUser (keys %g_hUsers) {
-        $hGroups{$g_hUsers{$iUser}->{group}} = 1 if $g_hUsers{$iUser}->{group};
+        $hGroups{ $g_hUsers{$iUser}->{group} } = 1 if $g_hUsers{$iUser}->{group};
     }
 
     return keys(%hGroups);
 }
+
 
 
 sub humanTest($) {
@@ -188,6 +194,7 @@ sub humanTest($) {
 
     return ($sName !~ /^\!/);
 }
+
 
 
 sub humanUsersPhone($) {
@@ -231,7 +238,7 @@ sub usersHealthCheck() {
 
                 if ($sDataPair =~ /\b(\d+):(\d+)\b/) {
                     my $iPhone = $1;
-                    my $iTime = $2;
+                    my $iTime  = $2;
                     $sData =~ s/$iPhone:$iTime// if ($iTime < $iNow - 172800);
                 }
                 else {
@@ -240,7 +247,8 @@ sub usersHealthCheck() {
             }
 
             if ($sData =~ /^\s*$/) {
-                delete $hDedupeByMessage{$sMessage} 
+                delete $hDedupeByMessage{
+                    $sMessage};
             }
             else {
                 $hDedupeByMessage{$sMessage} = $sData;
@@ -248,7 +256,7 @@ sub usersHealthCheck() {
         }
 
         my $iAfterCount = keys %hDedupeByMessage;
-        my $iDiff = $iBeforeCount - $iAfterCount;
+        my $iDiff       = $iBeforeCount - $iAfterCount;
         debugLog(D_users | D_pageEngine, "cleaned up deduping hash ($iDiff entr" . ($iDiff == 1 ? 'y' : 'ies') . " removed, $iAfterCount remaining)");
     }
 }
@@ -256,14 +264,14 @@ sub usersHealthCheck() {
 
 
 sub blockedByFilter($$$) {
-    my $iPhone = shift;
-    my $rMessage = shift;
+    my $iPhone           = shift;
+    my $rMessage         = shift;
     my $iLastProblemTime = shift;
-    my $sMessage = ${$rMessage};
-    my $iNow = time();
-    my $sRecoveryRegex = main::getRecoveryRegex();
-    my $sProblemRegex = main::getProblemRegex();
-    my $sRearmedRegex = 'DSPS Trigger.*rearmed';
+    my $sMessage         = ${$rMessage};
+    my $iNow             = time();
+    my $sRecoveryRegex   = main::getRecoveryRegex();
+    my $sProblemRegex    = main::getProblemRegex();
+    my $sRearmedRegex    = 'DSPS Trigger.*rearmed';
     use constant THROTTLE_PAGES => 5;
 
     # FITLER:  Recoveries per user
@@ -275,26 +283,30 @@ sub blockedByFilter($$$) {
     # FITLER:  Smart recoveries per user
     # Smart recoveries means to let the recovery through if it during the day or [when night] if it's within 3 minutes
     # of the last problem page
-    if ($sRecoveryRegex && ($g_hUsers{$iPhone}->{filter_recoveries} == 2) && (($sMessage =~ /$sRecoveryRegex/) || ($sMessage =~ /$sRearmedRegex/)) &&
-        !isDuringWakingHours() && ($iNow - $iLastProblemTime > 180)) {
+    if (   $sRecoveryRegex
+        && ($g_hUsers{$iPhone}->{filter_recoveries} == 2)
+        && (($sMessage =~ /$sRecoveryRegex/) || ($sMessage =~ /$sRearmedRegex/))
+        && !isDuringWakingHours()
+        && ($iNow - $iLastProblemTime > 180))
+    {
         infoLog("blocked for " . $g_hUsers{$iPhone}->{name} . " ($iPhone) [SmartRecovery]: $sMessage");
         return 1;
     }
 
     # FILTER:  Rate Throttling
     if (($g_hUsers{$iPhone}->{throttle}) && ($g_hUsers{$iPhone}->{throttle} =~ /(\d+)\/(\d+)/)) {
-        my $iCount = $1;
+        my $iCount    = $1;
         my $iLastTime = $2;
 
         if ($iNow - $iLastTime > 60) {
             $g_hUsers{$iPhone}->{throttle} = '1/' . $iNow;
         }
         else {
-            $g_hUsers{$iPhone}->{throttle} = $iCount+1 . '/' . $iLastTime;
+            $g_hUsers{$iPhone}->{throttle} = $iCount + 1 . '/' . $iLastTime;
 
-            if (($sMessage =~ /$sProblemRegex/) && ($iCount > 2 * THROTTLE_PAGES + 1)) {
+            if (($sMessage =~ /$sProblemRegex/) && ($iCount > (2 * THROTTLE_PAGES + 1))) {
                 if (main::getAllNagiosFilterTillGlobal() < $iNow) {
-                    main::setAllNagiosFilterTillGlobal($iNow + 60*30);   # half hour
+                    main::setAllNagiosFilterTillGlobal($iNow + 60 * 30);    # half hour
                     $g_hUsers{$iPhone}->{throttle} = '';
                     main::sendCustomSystemMessageToRoom($iPhone, S_AutoNagiosMute, 2);
                     return 1;
@@ -316,8 +328,6 @@ sub blockedByFilter($$$) {
 
     return 0;
 }
-
-
 
 1;
 

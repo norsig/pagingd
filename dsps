@@ -39,6 +39,7 @@ use IO::Select;
 use Getopt::Long;
 use CGI qw();
 use Net::SMTP;
+use Cwd 'abs_path';
 use POSIX qw(strftime);
 use MIME::QuotedPrint::Perl;
 use LWP 5.64;
@@ -75,6 +76,7 @@ our $g_iDebugTopics = D_all & ~D_users & ~D_state & ~D_configRead & ~D_rooms;
 $< = $> = 65534 unless ($< == 65534);
 
 # process name
+my $g_sOriginalPath = $0;
 $0 = 'dsps: client process (perl)';
 
 # configure signal handlers
@@ -117,9 +119,9 @@ sub handlerDaemonExit() {
         $g_tListenerSocket->shutdown(2);
         $g_tListenerSocket->close();
     }
-    unlink(C_PIDPath);
     saveState();
     checkpointMetrics(1);
+    unlink(C_PIDPath);
     infoLog('daemon exiting on signal');
     closelog();    # syslog
     exit(0);
@@ -129,20 +131,11 @@ sub handlerDaemonExit() {
 # Signal handler for a SIGHUP
 #-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub handlerSigHup() {
-    infoLog('daemon caught SIGHUP - rereading config');
+    infoLog('daemon caught SIGHUP - restarting');
     saveState();
-    %g_hUsers       = ();
-    %g_hEscalations = ();
-    unless (DSPS_Config::readConfig($g_sConfigFilename) && DSPS_Config::configSyntaxValid()) {
-        infoLog("Aborting daemon due to configuration errors.");
-        if ($g_tListenerSocket) {
-            $g_tListenerSocket->shutdown(2);
-            $g_tListenerSocket->close();
-        }
-        unlink(C_PIDPath);
-        exit(1);
-    }
-    restoreState();
+    checkpointMetrics(1);
+    unlink(C_PIDPath);
+    exec(abs_path($g_sOriginalPath) . ' -d') or die("can't exec()");
 }
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -254,6 +247,8 @@ sub sendEmail($$$) {
     my $sMessage = shift;
     my $sFrom    = $g_hConfigOptions{smtp_from} ? $g_hConfigOptions{smtp_from} : 'noreply@dsps';
     my $sHeader  = "From: $sFrom\n";
+
+    print "*** EMAIL: $sMessage\n";
 
     return if ($g_bTEST_RUN > 1);
     return infoLog("ERROR:  cannot send mail without 'smtp_server' set in config file") unless $g_hConfigOptions{smtp_server};
@@ -510,7 +505,7 @@ sub sendSmsPage($$) {
     $0 = 'dsps: page submission process (perl)';
 
     # close the listening socket in the child
-    $g_tListenerSocket->close();
+    $g_tListenerSocket->close() if $g_tListenerSocket;  # socket not defined when called from exclusivePage()
 
     # prepare the gateway API call POST parameters from our config options
     my %hGatewayParams = ();
@@ -669,13 +664,19 @@ sub handlePagingCommands($$) {
                     $bRoomChanged = processMentions($iSender, $sParams, $sParams, 1);
                 }
                 else {
-                    $bRoomChanged = processMentions($iSender, $g_hConfigOptions{default_maint}, $g_hConfigOptions{default_maint}, 1);
+                    $bRoomChanged = processMentions($iSender, $g_hConfigOptions{default_maint} ? $g_hConfigOptions{default_maint} : '', $g_hConfigOptions{default_maint}, 1);
                 }
 
-                # put the room in maintenancd mode
-                $g_hRooms{ DSPS_Room::findUsersRoom($iSender) }->{maintenance} = 1;
+                if ($bRoomChanged) {
 
-                sendSystemMessageToRoom($iSender, S_NowInMaint, $iSilenceModifier);
+                    # put the room in maintenancd mode
+                    $g_hRooms{ DSPS_Room::findUsersRoom($iSender) }->{maintenance} = 1;
+
+                    sendSystemMessageToRoom($iSender, S_NowInMaint, $iSilenceModifier);
+                }
+                else {
+                    sendSmsPage($iSender, t("There's no default_maint user defined in the config.  Please specify a user via \":maint USER\""));
+                }
             }
             return 1;
         }
@@ -770,21 +771,29 @@ sub handlePagingCommands($$) {
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':sum')) {
                 if ((defined $sParams) && $sParams) {
 
-                    # set room's summary
-                    my $iRoom = DSPS_Room::findUsersRoom($iSender);
-                    if ($iRoom) {
-                        $g_hRooms{$iRoom}->{summary} = $sParams;
+                    if ($sParams =~ /;/) {
+                        # set room's summary
+                        my $iRoom = DSPS_Room::findUsersRoom($iSender);
+                        if ($iRoom) {
+                            $g_hRooms{$iRoom}->{summary} = $sParams;
 
-                        sendSystemMessageToRoom($iSender, "logged a summary for this conversation", $iSilenceModifier);
+                            sendSystemMessageToRoom($iSender, "logged a summary for this conversation", $iSilenceModifier);
+                        }
+                        else {
+                            sendSmsPage($iSender, t(S_SummaryTooLate));
+                        }
                     }
                     else {
-                        sendSmsPage($iSender, t(S_SummaryTooLate));
+                        sendSmsPage($iSender, t("The :summary command requires a description and impact separated by a semi-colon."));
                     }
 
                     return 1;
                 }
+
+                sendSmsPage($iSender, t(':summary DESCRIPTION; IMPACT'));
             }
-            sendSmsPage($iSender, t(':summary DESCRIPTION; IMPACT'));
+
+            return 1;
         }
 
         # set/edit a regex filter
@@ -967,8 +976,7 @@ sub handlePagingCommands($$) {
                 DSPS_Room::roomRemoveOccupant($iRoom, $iSender);
                 if (!DSPS_Room::roomHumanCount($iRoom)) {
                     DSPS_Room::logRoom($iRoom);
-                    DSPS_Room::destroyRoom(
-                        $iRoom);
+                    DSPS_Room::destroyRoom($iRoom);
                 }
             }
             else {
@@ -1283,7 +1291,7 @@ sub handlePagingCommands($$) {
     }
 
     # +NAME
-    elsif ($sMessage =~ /^\s*\+\s*(\S+)/) {
+    elsif ($sMessage =~ /^\s*\+\s*\@*(\S+)/) {
         my $sHistoryUser = $1;
         my $iRoom        = DSPS_Room::findUsersRoom($iSender);
 
@@ -1304,9 +1312,7 @@ sub handlePagingCommands($$) {
             }
 
             return 0 if $iFoundRecipient;
-            sendSmePage(
-                $iSender, t("There's no user named $sHistoryUser.  Note, you can't send room history to a group or alias.")
-              );
+            sendSmsPage($iSender, t("There's no user named $sHistoryUser.  Note, you can't send room history to a group or alias."));
         }
         else {
             sendSmsPage($iSender, t(S_YoureAlone));
@@ -1709,7 +1715,7 @@ sub processPageEngine($$) {
             # also sets up escalation timers for oncall mentions
             unless ($bBypass) {
                 if ($g_hUsers{$iSender}->{auto_include}) {
-                    infoLog("include is set for user " . $g_hUsers{$iSender}->{name} . "; only adding " . $g_hUsers{$iSender}->{auto_include});
+                    infoLog("redirect is set for user " . $g_hUsers{$iSender}->{name} . "; only adding " . $g_hUsers{$iSender}->{auto_include});
                     $bRoomChanged = processMentions($iSender, $g_hUsers{$iSender}->{auto_include}, $sOrigMessage) || $bRoomChanged;
                 }
                 else {
@@ -1815,6 +1821,24 @@ sub verifySendingUser($) {
 # Never returns.
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub daemonMain() {
+    my ($sServerAddr, $iServerPort) = getServerAddress(1, '0.0.0.0', 2176);
+
+    # open main server-side listening socket
+    $g_tListenerSocket = HTTP::Daemon->new(
+        Type      => SOCK_STREAM,
+        Listen    => 50,
+        Proto     => 'tcp',
+        Reuse     => 1,
+        LocalAddr => $sServerAddr,
+        LocalPort => $iServerPort
+    ) or die(infoLog("Can't create server listening socket: $!"));
+
+    # setup our call to select() by adding our listener socket to a filehandle list
+    my ($rtReadHandles) = new IO::Select();
+    $rtReadHandles->add($g_tListenerSocket);
+
+    restoreState();
+
     while (1) {
 
         # install signal handlers
@@ -1824,28 +1848,10 @@ sub daemonMain() {
 
         eval {
             $0 = 'dsps: ' . ($g_bTEST_RUN ? 'test' : 'live') . ' server process (perl)';
-
-            my ($sServerAddr, $iServerPort) = getServerAddress(1, '0.0.0.0', 2176);
             infoLog('daemon starting in ' . ($g_bTEST_RUN ? 'TEST MODE' : 'live mode') . "; listening on $sServerAddr:$iServerPort");
 
-            restoreState();
-
-            # open main server-side listening socket
-            $g_tListenerSocket = HTTP::Daemon->new(
-                Type      => SOCK_STREAM,
-                Listen    => 50,
-                Proto     => 'tcp',
-                Reuse     => 1,
-                LocalAddr => $sServerAddr,
-                LocalPort => $iServerPort
-            ) or die(infoLog("Can't create server listening socket: $!"));
-
-            # setup our call to select() by adding our listener socket to a filehandle list
-            my ($rtReadHandles) = new IO::Select();
-            $rtReadHandles->add($g_tListenerSocket);
-
             # daemon main loop
-            while (1) {
+            DAEMON_MAIN: while (1) {
 
                 # update daily stats for how many pages we've sent
                 checkpointMetrics();
@@ -1873,6 +1879,7 @@ sub daemonMain() {
                             $oRequest    = $oConnection->get_request();
                             $rVars       = CGI->new($oRequest->decoded_content())->Vars;
                         };
+                        my $sException = $@;
 
                         # it's important to disable the existing alarm *outside* of the above [inner] eval().  otherwise
                         # if the HTTP::Daemon object throws an exception it would exit that eval with the alarm still set.
@@ -1880,11 +1887,18 @@ sub daemonMain() {
                         # two code lines that bracket this comment (above & below).
                         alarm(0);
 
-                        if ($@ eq "alarm\n") {
+                        if ($sException eq "alarm\n") {
                             infoLog("ERROR:  timeout reading request" . ($oConnection ? " from " . $oConnection->peerhost() . ':' . $oConnection->peerport() : ''));
                             next;
                         }
                     };
+                    my $sException = $@;
+
+                    if ($sException) {
+                        infoLog("EXCEPTION (inner): $sException");
+                        sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected - exception in daemonMain (inner)\n\n$sException\n\ngrep dsps /var/log/syslog\n");
+                        next DAEMON_MAIN;
+                    }
 
                     next unless ((defined $oRequest) && $oRequest);
 
@@ -1927,11 +1941,11 @@ sub daemonMain() {
                                         # FWIW, most of what we do is prety fast anyway.  the real advantage is if we're creating an RT ticket on a
                                         # remote server that might make us slow to respond.
                                         $oConnection->send_response(HTTP::Response->new(200, 'OK', HTTP::Headers->new(), $sLiveStatus . "Message submitted\n"));
-                                        processPageEngine($rVars->{sender}, $rVars->{message});
+                                        processPageEngine($rVars->{sender}, dequote($rVars->{message}));
                                     }
                                     else {
                                         # main engine to process the incoming page and respond
-                                        my $sStatus = processPageEngine($rVars->{sender}, $rVars->{message});
+                                        my $sStatus = processPageEngine($rVars->{sender}, dequote($rVars->{message}));
 
                                         # send a response back to the dsps client
                                         $oConnection->send_response(HTTP::Response->new(200, 'OK', HTTP::Headers->new(), $sLiveStatus . "$sStatus\n"));
@@ -1971,10 +1985,12 @@ sub daemonMain() {
 
                         $oConnection->close();
                     };
+                    $sException = $@;
 
-                    if ($@) {
-                        infoLog("ERROR: $@ (caught & continuing)");
+                    if ($sException) {
+                        infoLog("EXCEPTION (middle): $sException [caught & continuing]");
                         $oConnection->close() if ($oConnection);
+                        sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected - exception in daemonMain (middle)\n\n$sException\n\ngrep dsps /var/log/syslog\n");
                     }
                 }
 
@@ -1990,9 +2006,10 @@ sub daemonMain() {
         };
 
         if ($@) {
-            print infoLog("EXCEPTION: $@");
-            print("restarting daemonMain");
-            sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected - exception in daemonMain\n\n$@\n\nDaemon auto-restarting.");
+            my $sException = $@;
+            infoLog("EXCEPTION (outer): $sException");
+            infoLog("restarting daemonMain");
+            sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected - exception in daemonMain (outer)\n\n$sException\n\nDaemon auto-restarting.");
         }
     }
 
@@ -2026,10 +2043,10 @@ sub daemonAlreadyRunning() {
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub showUsage() {
     print
-"dsps [-d | -s | -e | -i | -p escalation] [-c config_file] [-u user] [message]\n   -d  (re)start the paging daemon in the background\n   -t  start the paging daemon in the foreground (for testing)\n   -s  submit a message (pipe to stdin or via CLI)\n";
+"dsps [-d | -s | -e | -i | -p escalation] [-c config_file] [-u user] [-x user] [message]\n   -d  (re)start the paging daemon in the background\n   -t  start the paging daemon in the foreground (for testing)\n   -s  submit a message (pipe to stdin or via CLI)\n";
     print "   -e  submit an email (pipe to stdin or via CLI), i.e. ignore headers\n   -u  specify the submitting paging user\n   -p  print current oncall schedule for a given escalation\n";
     print
-"   -f  fast message submission to the daemon; don't wait for processing\n   -c  specify a config filename (default /etc/dsps.conf)\n   -i  show current status (info)\n   -v  show current version\n";
+"   -f  fast message submission to the daemon; don't wait for processing\n   -c  specify a config filename (default /etc/dsps.conf)\n   -x  exclusive page user\n   -i  show current status (info)\n   -v  show current version\n";
 }
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -2079,6 +2096,21 @@ sub readValidConfigOrDie($) {
     }
 }
 
+
+sub exclusivePage($$) {
+    my $sPerson = shift;
+    my $sMessage = shift;
+
+    if ($sPerson && (my $sMatchingUser = DSPS_User::matchUserByRegex($sPerson))) {
+        infoLog("exclusively paging " . $g_hUsers{$sMatchingUser}->{name} . ": $sMessage");
+        sendSmsPage($sMatchingUser, '!> ' . $sMessage);    
+    }
+    else {
+        print infoLog("no matching user found for '$sPerson'");
+    }
+}
+
+
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # This is the main logic for the client part of
 # of DSPS (the companion to daemonMain()).
@@ -2099,6 +2131,7 @@ sub clientStartup() {
     my $bVersion        = 0;
     my $sUser           = '';
     my $sEscalation     = '';
+    my $sExclusivePerson= '';
 
     GetOptions(
         'd'        => \$bCmdDaemon,
@@ -2106,6 +2139,7 @@ sub clientStartup() {
         's'        => \$bCmdSubmit,
         'e'        => \$bCmdSubmitEmail,
         'f'        => \$bFireFast,
+        'x=s'      => \$sExclusivePerson,
         'i'        => \$bCmdStatus,
         'v'        => \$bVersion,
         'config=s' => \$g_sConfigFilename,
@@ -2137,13 +2171,24 @@ sub clientStartup() {
         }
     }
 
-    if ($bCmdSubmit || $bCmdSubmitEmail) {
+    if ($bCmdSubmit || $bCmdSubmitEmail || $sExclusivePerson) {
         readValidConfigOrDie($g_sConfigFilename);
 
         if (!$sMessage) {
-            print infoLog("With submit you have to specify a message to send.");
+            print infoLog("With " . ($sExclusivePerson ? 'Exclusive Person' : 'submit') . " you have to specify a message to send.");
             exit(1);
         }
+
+        if ($sExclusivePerson) {
+            if ($bCmdSubmit || $bCmdSubmitEmail) {
+                print infoLog("Exclusive Person (-x) is mutually-exclusive with raw message submission (-s) and email submission (-e).");
+                exit(1);
+            }
+            
+            exclusivePage($sExclusivePerson, $sMessage);
+            exit(1); 
+        }
+        
 
         if ($bCmdSubmit && $bCmdSubmitEmail) {
             print infoLog("Raw message submission (-s) and email submission (-e) are mutually-exclusive.");
@@ -2151,7 +2196,7 @@ sub clientStartup() {
         }
 
         unless ($sUser) {
-            print infoLog("Messages have to be submitted from a specific paging using (-u).");
+            print infoLog("Messages have to be submitted from a specific paging user (-u).");
             exit(1);
         }
 
@@ -2234,18 +2279,18 @@ sub clientStartup() {
     }
 
     if ($bCmdDaemon || $bRunForeground) {
-        my $bRestart = 0;
-        if (my $iPID = daemonAlreadyRunning()) {
-            my $sOutput = infoLog("Killing existing daemon (pid=$iPID)");
-            print $sOutput if $bRunForeground;
-            kill('TERM', $iPID);
-            $bRestart = 1;
-            sleep(1);
+        if (my $iDaemonPID = daemonAlreadyRunning()) {
 
-            if (daemonAlreadyRunning()) {
-                print infoLog("ERROR:  daemon already running - can't seem to kill it");
-                exit(1);
+            # request to startup in the background when a daemon is already running in the background
+            if ($bCmdDaemon) {
+                print STDERR "restarting previously running background dsps daemon via SIGHUP...\n";
+                kill('HUP', $iDaemonPID);
+                exit(0);
             }
+
+            # request to startup in foreground when a daemon is already running in the background
+            kill('TERM', $iDaemonPID);
+            sleep(1);
         }
 
         readValidConfigOrDie($g_sConfigFilename);
@@ -2257,17 +2302,11 @@ sub clientStartup() {
         }
         else {
             $g_bTEST_RUN = 3 unless $g_bTEST_RUN;    # i.e. if already hardcoded to '1' then don't override that
-            print "  *** RUNNING IN FOREGROUND (\$g_bTEST_RUN=$g_bTEST_RUN) ***\n";
+            print "  *** RUNNING IN FOREGROUND ***\n";
             daemonMain();
         }
         exit(0);
     }
-
-    #if ($bCmdRunTests) {
-    #    readValidConfigOrDie('config.test');
-    #    DSPS_Test::startTests();
-    #    exit(0);
-    #}
 
     showUsage();
 }

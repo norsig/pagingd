@@ -11,9 +11,9 @@ use base 'Exporter';
 our @EXPORT = ();
 
 
-sub startTests() {
-1;
-}
 
+sub startTests() {
+    1;
+}
 
 1;
