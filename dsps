@@ -775,7 +775,7 @@ sub handlePagingCommands($$) {
                         # set room's summary
                         my $iRoom = DSPS_Room::findUsersRoom($iSender);
                         if ($iRoom) {
-                            $g_hRooms{$iRoom}->{summary} = $sParams;
+                            $g_hRooms{$iRoom}->{summary} = $sParams . " (via " . $g_hUsers{$iSender}->{name} . ")";
 
                             sendSystemMessageToRoom($iSender, "logged a summary for this conversation", $iSilenceModifier);
                         }

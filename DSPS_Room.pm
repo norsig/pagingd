@@ -391,9 +391,11 @@ sub logRoom($) {
         print LOG roomStatus($iRoom, 0, 1, 1) . "\n";
 
         if ($g_hRooms{$iRoom}->{summary} && ($g_hRooms{$iRoom}->{summary} =~ /^(.*?)\s*;\s*(.*)$/)) {
+            my $sDesc = ucfirst($1);
+            my $sImpct = ucfirst($2);
             print LOG "\n\t* " . ${ $g_hRooms{$iRoom}->{history} }[0] . "\n\n";
-            print LOG "Description: $1\n";
-            print LOG "Station Impact: $2\n";
+            print LOG "Description: $sDesc\n";
+            print LOG "Station Impact: $sImpct\n";
         }
         else {
             foreach my $sHistory (@{ $g_hRooms{$iRoom}->{history} }) {
