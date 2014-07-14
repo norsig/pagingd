@@ -393,7 +393,9 @@ sub logRoom($) {
         if ($g_hRooms{$iRoom}->{summary} && ($g_hRooms{$iRoom}->{summary} =~ /^(.*?)\s*;\s*(.*)$/)) {
             my $sDesc = ucfirst($1);
             my $sImpct = ucfirst($2);
-            print LOG "\n\t* " . ${ $g_hRooms{$iRoom}->{history} }[0] . "\n\n";
+            my $sDetail = ${ $g_hRooms{$iRoom}->{history} }[0];
+            $sDetail =~ s/\n/ /g;
+            print LOG "\n\t* $sDesc\n\n";
             print LOG "Description: $sDesc\n";
             print LOG "Station Impact: $sImpct\n";
         }
