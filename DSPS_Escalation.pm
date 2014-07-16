@@ -542,6 +542,7 @@ sub swapSchedules($$;$) {
     }
 
     # update the running schedule with our new one
+    my $rFallbackSchedule = $g_hEscalations{$sTargetEsc}->{schedule};
     %hSchedule = ();
     foreach my $iDay (sort keys %hFullSchedule) {
 
@@ -559,11 +560,19 @@ sub swapSchedules($$;$) {
     }
     $g_hEscalations{$sTargetEsc}->{schedule} = \%hSchedule;
 
-    main::sendSmsPage($iSender, t(getFullOncallSchedule($sTargetEsc)));
-    main::sendSmsPage($iSender, t(S_ScheduleSwap1, $g_hUsers{$iSwapee}->{name}));
+    if (my $sError = main::writeConfig()) {
+        $g_hEscalations{$sTargetEsc}->{schedule} = $rFallbackSchedule;
+        main::sendSmsPage($iSender, t("Swap failed due to system error; your admin has been notified by email."));
+        main::sendEmail(main::getAdminEmail(), '', "Subject: DSPS Error in DSPS_Config::writeConfig()\n\n" . $g_hUsers{$iSender}->{name} . " attempted a schedule swap with " . $g_hUsers{$iSwapee}->{name} . ".\n" .
+            "It failed while attempting to write the new config file to disk:\n$sError"); 
+    }
+    else {
+        main::sendSmsPage($iSender, t(getFullOncallSchedule($sTargetEsc)));
+        main::sendSmsPage($iSender, t(S_ScheduleSwap1, $g_hUsers{$iSwapee}->{name}));
 
-    main::sendEmail($g_hEscalations{$sTargetEsc}->{swap_email},
-        main::getAdminEmail(), sv(E_SwapSuccess4, $g_hUsers{$iSender}->{name}, $g_hUsers{$iSwapee}->{name}, $sTargetEsc, getFullOncallSchedule($sTargetEsc)));
+        main::sendEmail($g_hEscalations{$sTargetEsc}->{swap_email},
+            main::getAdminEmail(), sv(E_SwapSuccess4, $g_hUsers{$iSender}->{name}, $g_hUsers{$iSwapee}->{name}, $sTargetEsc, getFullOncallSchedule($sTargetEsc)));
+    }
 }
 
 1;

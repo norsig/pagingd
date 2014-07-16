@@ -110,6 +110,7 @@ sub getLogRoomsTo()                 {return $g_hConfigOptions{log_rooms_to};}
 sub getAllNagiosFilterTillGlobal()  {DSPS_SystemFilter::getAllNagiosFilterTill();}
 sub setAllNagiosFilterTillGlobal($) {DSPS_SystemFilter::setAllNagiosFilterTill(shift);}
 sub getSummaryReminder()            {return $g_hConfigOptions{summary_reminder};}
+sub writeConfig()                   {return DSPS_Config::writeConfig(); }
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Signal handler for a SIGTERM
@@ -1094,7 +1095,6 @@ sub handlePagingCommands($$) {
                     my $sEsc    = $2;
 
                     DSPS_Escalation::swapSchedules($iSender, $sSwapee, $sEsc);
-                    DSPS_Config::writeConfig();
                 }
                 else {
                     sendSmsPage($iSender, t(S_SwapSyntax));
