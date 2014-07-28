@@ -583,7 +583,7 @@ sub readConfig(;$) {
 sub writeConfig() {
     my $sConfigFileName = shift || "$sConfigPath/dsps.conf";
     open(CFG, $sConfigFileName)        || return 0;
-    open(NEW, ">$sConfigFileName.new") || return infoLog("Unable to write new config file ($sConfigFileName.new)");
+    open(NEW, ">/tmp/dsps.conf.new") || return infoLog("Unable to write new config file (/tmp/dsps.conf.new)");
 
     my $sSection       = '';
     my $sInfo          = '';
@@ -630,11 +630,30 @@ sub writeConfig() {
     close(CFG);
     close(NEW);
 
+    # backup the config file
+    # this can fail if we don't have write access to the dir in question (like /etc)
+    # no point in checking for failure since there's little else to do
     unlink("$sConfigFileName.bck");
-    rename("$sConfigFileName",     "$sConfigFileName.bck");
-    rename("$sConfigFileName.new", "$sConfigFileName");
+    rename("$sConfigFileName", "$sConfigFileName.bck");
 
-    debugLog(D_configWrite, "saved new configuration file $sConfigFileName");
+    # is the config file a symlink?
+    my $sRealFile = $sConfigFileName;
+    eval {
+        if (-l $sConfigFileName) {
+            $sRealFile = readlink($sConfigFileName);
+            unless ($sRealFile =~ m,^/,) {
+                $sRealFile = "$sConfigFileName/$sRealFile";
+            }
+        }
+    };
+
+    if (rename("/tmp/dsps.conf.new", $sRealFile)) {
+        debugLog(D_configWrite, "saved new configuration file $sConfigFileName");
+        return '';
+    }
+    else {
+        return infoLog("Unable to rename new configuration file into place ($sRealFile)");
+    }
 }
 
 1;

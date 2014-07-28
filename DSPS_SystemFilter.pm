@@ -4,6 +4,7 @@ use FreezeThaw qw(freeze thaw);
 use DSPS_User;
 use DSPS_Room;
 use DSPS_Config;
+use DSPS_String;
 use DSPS_Debug;
 use strict;
 use warnings;
@@ -52,16 +53,16 @@ sub blockedByFilter($$) {
     if (   ($iFilterRecoveryLoadTill > $iNow)
         && ($sMessage =~ /(^[-+!]{0,1}RECOVERY)|(System Load)/))
     {
-        infoLog("message matched Recovery or Load filter");
-        return 1;
+        debugLog(D_filters, "message matched Recovery or Load filter");
+        return "recovery/load";
     }
 
     # check the all nagios filter
     if (   ($iFilterAllNagiosTill > $iNow)
         && (($sMessage =~ /$g_hConfigOptions{nagios_problem_regex}/) || ($sMessage =~ /$g_hConfigOptions{nagios_recovery_regex}/)))
     {
-        infoLog("message matched All Nagios filter");
-        return 1;
+        debugLog(D_filters, "message matched All Nagios filter");
+        return "allNagios";
     }
 
     # check all regex filters
@@ -71,8 +72,8 @@ sub blockedByFilter($$) {
         if (   ($rFilterRegex{$iRegexFilterID}->{till} >= $iNow)
             && ($sMessage =~ /$sThisRegex/i))
         {
-            infoLog("message matched Regex filter (" . $rFilterRegex{$iRegexFilterID}->{regex} . ")");
-            return 1;
+            debugLog(D_filters, "message matched Regex filter (" . $rFilterRegex{$iRegexFilterID}->{regex} . ")");
+            return "regex";
         }
 
         rmRegexFilter($rFilterRegex{$iRegexFilterID}->{regex}) if ($rFilterRegex{$iRegexFilterID}->{till} < $iNow);
@@ -82,11 +83,12 @@ sub blockedByFilter($$) {
     if ($iRoom && $g_hRooms{$iRoom}->{ack_mode}) {
         my $sGenericMessage = $sMessage;
         $sGenericMessage =~ s/\bDate:\s.*$//s;
+        $sGenericMessage =~ s/HTTP OK:.*\d+ by.*$//s;
 
         foreach my $sPrevMsg (@{ $g_hRooms{$iRoom}->{history} }) {
             if ($sPrevMsg =~ /$sGenericMessage/) {
-                infoLog("message matched previous in room's history (ack-mode)");
-                return 1;
+                debugLog(D_filters, "message matched previous in room's history (ack-mode)");
+                return "ackMode";
             }
         }
     }

@@ -39,6 +39,7 @@ use IO::Select;
 use Getopt::Long;
 use CGI qw();
 use Net::SMTP;
+use Cwd 'abs_path';
 use POSIX qw(strftime);
 use MIME::QuotedPrint::Perl;
 use LWP 5.64;
@@ -69,12 +70,14 @@ use strict;
 # $g_iDebugTopics = D_all & ~D_state;
 # All the D_xxxxx debug constants are listed in DSPS_Debug.pm.
 #-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-our $g_iDebugTopics = D_all & ~D_users & ~D_state & ~D_configRead & ~D_rooms;
+#our $g_iDebugTopics = D_all & ~D_users & ~D_state & ~D_configRead & ~D_rooms;
+our $g_iDebugTopics = 0;
 
 # drop root privs to become 'nobody'
 $< = $> = 65534 unless ($< == 65534);
 
 # process name
+my $g_sOriginalPath = $0;
 $0 = 'dsps: client process (perl)';
 
 # configure signal handlers
@@ -108,6 +111,7 @@ sub getLogRoomsTo()                 {return $g_hConfigOptions{log_rooms_to};}
 sub getAllNagiosFilterTillGlobal()  {DSPS_SystemFilter::getAllNagiosFilterTill();}
 sub setAllNagiosFilterTillGlobal($) {DSPS_SystemFilter::setAllNagiosFilterTill(shift);}
 sub getSummaryReminder()            {return $g_hConfigOptions{summary_reminder};}
+sub writeConfig()                   {return DSPS_Config::writeConfig(); }
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Signal handler for a SIGTERM
@@ -117,9 +121,9 @@ sub handlerDaemonExit() {
         $g_tListenerSocket->shutdown(2);
         $g_tListenerSocket->close();
     }
-    unlink(C_PIDPath);
     saveState();
     checkpointMetrics(1);
+    unlink(C_PIDPath);
     infoLog('daemon exiting on signal');
     closelog();    # syslog
     exit(0);
@@ -129,20 +133,11 @@ sub handlerDaemonExit() {
 # Signal handler for a SIGHUP
 #-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub handlerSigHup() {
-    infoLog('daemon caught SIGHUP - rereading config');
+    infoLog('daemon caught SIGHUP - restarting');
     saveState();
-    %g_hUsers       = ();
-    %g_hEscalations = ();
-    unless (DSPS_Config::readConfig($g_sConfigFilename) && DSPS_Config::configSyntaxValid()) {
-        infoLog("Aborting daemon due to configuration errors.");
-        if ($g_tListenerSocket) {
-            $g_tListenerSocket->shutdown(2);
-            $g_tListenerSocket->close();
-        }
-        unlink(C_PIDPath);
-        exit(1);
-    }
-    restoreState();
+    checkpointMetrics(1);
+    unlink(C_PIDPath);
+    exec(abs_path($g_sOriginalPath) . ' -d') or die("can't exec()");
 }
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -512,7 +507,7 @@ sub sendSmsPage($$) {
     $0 = 'dsps: page submission process (perl)';
 
     # close the listening socket in the child
-    $g_tListenerSocket->close();
+    $g_tListenerSocket->close() if $g_tListenerSocket;  # socket not defined when called from exclusivePage()
 
     # prepare the gateway API call POST parameters from our config options
     my %hGatewayParams = ();
@@ -539,7 +534,7 @@ sub sendSmsPage($$) {
     $tBrowser->timeout(10);
     my $tResponse = $tBrowser->post($g_hConfigOptions{gateway_url}, \%hGatewayParams);
 
-    infoLog("PAGE " . $g_hUsers{$iCellNumber}->{name} . " ($iCellNumber) [" . $tResponse->code() . "]: $sMessage");
+    debugLog(D_pageEngine, "PAGE " . $g_hUsers{$iCellNumber}->{name} . " ($iCellNumber) [" . $tResponse->code() . "]: $sMessage");
 
     unless ($tResponse->is_success) {
         if (defined($g_hConfigOptions{fallback_email}) && open(MAIL, "| /usr/sbin/sendmail " . $g_hConfigOptions{fallback_email})) {
@@ -612,7 +607,9 @@ sub handlePagingCommands($$) {
         if ($sCommand =~ /^\?room/) {
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, '?rooms')) {
                 my $iUsersRoom = DSPS_Room::findUsersRoom($iSender);
-                sendSmsPage($iSender, t(DSPS_Room::roomStatus((($sCommand eq '?room') && $iUsersRoom) ? $iUsersRoom : 0)));
+                my $sStatus = DSPS_Room::roomStatus((($sCommand eq '?room') && $iUsersRoom) ? $iUsersRoom : 0); 
+                sendSmsPage($iSender, t($sStatus));
+                logPage($iSender, '', "received room status: $sStatus");
             }
 
             return 1;
@@ -725,7 +722,9 @@ sub handlePagingCommands($$) {
         # list all triggers
         if ($sCommand =~ /^\?trigger/) {
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, '?triggers')) {
-                sendSmsPage($iSender, t(DSPS_Trigger::listTriggers()));
+                my $sTriggers = DSPS_Trigger::listTriggers();
+                sendSmsPage($iSender, t($sTriggers));
+                logPage($iSender, '', "received trigger list: $sTriggers");
             }
 
             return 1;
@@ -739,6 +738,7 @@ sub handlePagingCommands($$) {
 
                     if ($sResult) {
                         sendSmsPage($iSender, t($sResult));
+                        logPage($iSender, '', "disarmed triggers matching $sParams");
                     }
                     else {
                         sendSmsPage($iSender, t(S_NoSuchTrigger));
@@ -760,6 +760,7 @@ sub handlePagingCommands($$) {
 
                     if ($sResult) {
                         sendSmsPage($iSender, t($sResult));
+                        logPage($iSender, '', "armed triggers matching $sParams");
                     }
                     else {
                         sendSmsPage($iSender, t(S_NoSuchTrigger));
@@ -778,21 +779,29 @@ sub handlePagingCommands($$) {
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':sum')) {
                 if ((defined $sParams) && $sParams) {
 
-                    # set room's summary
-                    my $iRoom = DSPS_Room::findUsersRoom($iSender);
-                    if ($iRoom) {
-                        $g_hRooms{$iRoom}->{summary} = $sParams;
+                    if ($sParams =~ /;/) {
+                        # set room's summary
+                        my $iRoom = DSPS_Room::findUsersRoom($iSender);
+                        if ($iRoom) {
+                            $g_hRooms{$iRoom}->{summary} = $sParams . " (via " . $g_hUsers{$iSender}->{name} . ")";
 
-                        sendSystemMessageToRoom($iSender, "logged a summary for this conversation", $iSilenceModifier);
+                            sendSystemMessageToRoom($iSender, "logged a summary for this conversation", $iSilenceModifier);
+                        }
+                        else {
+                            sendSmsPage($iSender, t(S_SummaryTooLate));
+                        }
                     }
                     else {
-                        sendSmsPage($iSender, t(S_SummaryTooLate));
+                        sendSmsPage($iSender, t("The :summary command requires a description and impact separated by a semi-colon."));
                     }
 
                     return 1;
                 }
+
+                sendSmsPage($iSender, t(':summary DESCRIPTION; IMPACT'));
             }
-            sendSmsPage($iSender, t(':summary DESCRIPTION; IMPACT'));
+
+            return 1;
         }
 
         # set/edit a regex filter
@@ -830,7 +839,9 @@ sub handlePagingCommands($$) {
         # show current filters
         if ($sCommand =~ /^\?filter/) {
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, '?filters')) {
-                sendSmsPage($iSender, t(filterStatus($iSender)));
+                my $sFilters = filterStatus($iSender);
+                logPage($iSender, '', "received filter status: $sFilters");
+                sendSmsPage($iSender, t($sFilters));
             }
 
             return 1;
@@ -847,7 +858,9 @@ sub handlePagingCommands($$) {
                 }
 
                 if (keys %hVaca) {
-                    sendSmsPage($iSender, t(join("\n", map {"$_: " . prettyDateTime($hVaca{$_})} sort keys %hVaca)));
+                    my $sVaca = join("\n", map {"$_: " . prettyDateTime($hVaca{$_})} sort keys %hVaca);
+                    sendSmsPage($iSender, t($sVaca));
+                    logPage($iSender, '', "received vacation status: $sVaca");
                 }
                 else {
                     sendSmsPage($iSender, t(S_NoVacations));
@@ -876,11 +889,13 @@ sub handlePagingCommands($$) {
                         $g_hUsers{$iSender}->{vacation_end} = time() + $iSeconds;
                         sendSmsPage($iSender, t("You have successfully set $sTimeText of vacation time."));
                         sendEmail(DSPS_Escalation::getUsersEscalationsEmails($iSender), $g_hConfigOptions{admin_email}, sv(E_VacationSet2, $g_hUsers{$iSender}->{name}, $sTimeText));
+                        logPage($iSender, '', "set $sTimeText of vacation");
                     }
                     else {
                         $g_hUsers{$iSender}->{vacation_end} = 0;
                         sendSmsPage($iSender, t("You have canceled your vacation setting."));
                         sendEmail(DSPS_Escalation::getUsersEscalationsEmails($iSender), $g_hConfigOptions{admin_email}, sv(E_VacationCancel1, $g_hUsers{$iSender}->{name}));
+                        logPage($iSender, '', "canceled remaining vacation time");
                     }
                 }
             }
@@ -908,11 +923,13 @@ sub handlePagingCommands($$) {
                             sendSmsPage($iSender, t("Your macro " . $sNewMacroName . " has been added."));
                         }
                         $hMacros{$sNewMacroName} = $sNewMacroDef;
+                        logPage($iSender, '', "set/updated macro $sNewMacroName ($sNewMacroDef)");
                     }
                     else {
                         if (defined $hMacros{$sNewMacroName}) {
                             delete($hMacros{$sNewMacroName});
                             sendSmsPage($iSender, t("Your macro " . $sNewMacroName . " has been deleted."));
+                            logPage($iSender, '', "deleted macro $sNewMacroName");
                         }
                         else {
                             sendSmsPage($iSender, t("You don't have a macro named " . $sNewMacroName . " to delete."));
@@ -937,11 +954,13 @@ sub handlePagingCommands($$) {
                 if ($sParams) {
                     $sParams =~ tr/[A-Z]/[a-z]/;
                     sendSmsPage($iSender, t(defined($hMacros{$sParams}) ? ("$sParams = \"" . $hMacros{$sParams} . '"') : "You don't have a macro named $sParams."));
+                    logPage($iSender, '', defined($hMacros{$sParams}) ? "received detail of current macro $sParams" : "asked for definition of non-existent macro");
                 }
                 else {
                     sendSmsPage($iSender,
                         t(keys %hMacros ? ("Your macros: " . join(', ', sort keys %hMacros)) : "You don't have any macros defined.  Use ':macro NAME DEFINITION' to create some."));
                     sendSmsPage($iSender, t("Use '?macro NAME' to view the definition of a specific macro."));
+                    logPage($iSender, '', "received list of current macros");
                 }
             }
 
@@ -960,6 +979,7 @@ sub handlePagingCommands($$) {
                     my %hMacros = ();
                     $g_hUsers{$iSender}->{macros} = \%hMacros;
                     sendSmsPage($iSender, t("All of your macros have been deleted."));
+                    logPage($iSender, '', "deleted all of their macros");
                 }
             }
 
@@ -1027,6 +1047,7 @@ sub handlePagingCommands($$) {
                                 sendSmsPage($iUserPhone, t(($iSender == $iUserPhone ? 'You' : $g_hUsers{$iSender}->{name}) . " pulled: " . $sAudience));
                             }
                         }
+                        logPage($iSender, '', "pulled into new room: $sAudience");
                     }
                     else {
                         sendSmsPage($iSender, t(S_NotInRoom));
@@ -1049,6 +1070,7 @@ sub handlePagingCommands($$) {
                 else {
                     $g_hUsers{$iSender}->{filter_recoveries} = 2;
                     sendSmsPage($iSender, t(S_SmartFiltered));
+                    logPage($iSender, '', "enabled smart recoveries");
                 }
             }
 
@@ -1064,6 +1086,7 @@ sub handlePagingCommands($$) {
                 else {
                     $g_hUsers{$iSender}->{filter_recoveries} = 1;
                     sendSmsPage($iSender, t(S_RecoveryFiltered));
+                    logPage($iSender, '', "disabled recoveries");
                 }
             }
 
@@ -1076,6 +1099,7 @@ sub handlePagingCommands($$) {
                 if ($g_hUsers{$iSender}->{filter_recoveries}) {
                     $g_hUsers{$iSender}->{filter_recoveries} = 0;
                     sendSmsPage($iSender, t(S_RecoveryEnabled));
+                    logPage($iSender, '', "enabled recoveries (no filtering)");
                 }
                 else {
                     sendSmsPage($iSender, t(S_RecoveryAlreadyU));
@@ -1093,7 +1117,7 @@ sub handlePagingCommands($$) {
                     my $sEsc    = $2;
 
                     DSPS_Escalation::swapSchedules($iSender, $sSwapee, $sEsc);
-                    DSPS_Config::writeConfig();
+                    logPage($iSender, '', "swapped schedules with $sSwapee");
                 }
                 else {
                     sendSmsPage($iSender, t(S_SwapSyntax));
@@ -1110,6 +1134,7 @@ sub handlePagingCommands($$) {
                 if ($sParams) {
                     if (my $sKey = caselessHashLookup($sParams, %g_hEscalations)) {
                         sendSmsPage($iSender, t(DSPS_Escalation::getFullOncallSchedule($sKey)));
+                        logPage($iSender, '', "received oncall schedule for $sParams");
                     }
                     else {
                         sendSmsPage($iSender, t(S_NoSuchEscalation1, $sParams));
@@ -1128,6 +1153,7 @@ sub handlePagingCommands($$) {
                     }
 
                     sendSmsPage($iSender, t($sResult ? $sResult : S_NoEscalations));
+                    logPage($iSender, '', "received general oncall schedules");
                 }
             }
 
@@ -1147,16 +1173,19 @@ sub handlePagingCommands($$) {
                         $g_hUsers{$iSender}->{auto_reply_text}   = $sAutoReply;
                         $g_hUsers{$iSender}->{auto_reply_expire} = time() + $iSeconds;
                         sendSmsPage($iSender, t(S_AutoReplySet1, $sTimeText));
+                        logPage($iSender, '', "set auto reply '$sAutoReply' for $sTimeText");
                     }
                     else {
                         $g_hUsers{$iSender}->{auto_reply_text}   = '';
                         $g_hUsers{$iSender}->{auto_reply_expire} = 0;
                         sendSmsPage($iSender, t(S_AutoReplyRm));
+                        logPage($iSender, '', "deleted auto reply");
                     }
                 }
                 else {
                     if (my $sAr = DSPS_User::getAutoReply($iSender)) {
                         sendSmsPage($iSender, t("Your current auto reply: \"$sAr\""));
+                        logPage($iSender, '', "received current auto reply '$sAr'");
                     }
                     else {
                         sendSmsPage($iSender, t(S_AutoReplySyx));
@@ -1172,6 +1201,7 @@ sub handlePagingCommands($$) {
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':autoreply')) {
                 if (my $sAr = DSPS_User::getAutoReply($iSender)) {
                     sendSmsPage($iSender, t("Your current auto reply: \"$sAr\""));
+                    logPage($iSender, '', "received current auto reply '$sAr'");
                 }
                 else {
                     sendSmsPage($iSender, t(S_AutoReplySyx));
@@ -1216,6 +1246,7 @@ sub handlePagingCommands($$) {
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, '?groups')) {
                 sendSmsPage($iSender, t("Groups:\n" . join(', ', sort DSPS_Room::humanSort DSPS_User::allGroups())));
                 sendSmsPage($iSender, t("Aliases:\n" . join(', ', sort(DSPS_Alias::visibleAliases())))) if (keys %g_hAliases);
+                logPage($iSender, '', "received all groups/aliases");
             }
 
             return 1;
@@ -1234,6 +1265,7 @@ sub handlePagingCommands($$) {
                     if ($iRoom) {
                         sendEmail($sRecipient, '', "Subject:  DSPS room history\n\n[Emailed by " . $g_hUsers{$iSender}->{name} . "]\n\n$sEmailText");
                         sendSmsPage($iSender, t(S_EmailSent1, $sRecipient));
+                        logPage($iSender, '', "sent room history to $sRecipient");
                     }
                     else {
                         sendSmsPage($iSender, t(S_YoureAlone));
@@ -1251,6 +1283,7 @@ sub handlePagingCommands($$) {
         if ($sCommand =~ /^\?\s*(\S+)/) {
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, '??')) {
                 my $sEntity = $1;
+                logPage($iSender, '', "received definition of $sEntity");
 
                 # look for groups
                 foreach my $sGroup (DSPS_User::allGroups()) {
@@ -1306,6 +1339,8 @@ sub handlePagingCommands($$) {
                     for my $iIndex ($iStartIndex .. $#aHistory) {
                         sendSmsPage($g_hUsers{$iUser}->{phone}, '>' . $aHistory[$iIndex]);
                     }
+
+                    logPage($iSender, '', "sent +history to " . $g_hUsers{$iUser}->{name});
                     last;
                 }
             }
@@ -1493,13 +1528,15 @@ sub sendUserMessageToRoom($$$) {
     }
 
     # loop through room occupants
+    my $sBlocks = '';
     foreach my $iUserPhone (keys %{ $g_hRooms{$iRoom}->{occupants_by_phone} }) {
+        my $sBlockReason = '';
 
         # only text human users (recipients)
         # and either the sender has to also be human or if it's an automation sender then
         # it can't be blocked by this user's filters
         if (DSPS_User::humanUsersPhone($iUserPhone)
-            && (DSPS_User::humanUsersPhone($iSenderPhone) || !DSPS_User::blockedByFilter($iUserPhone, \$sMessage, $g_hRooms{$iRoom}->{last_problem_time})))
+            && (DSPS_User::humanUsersPhone($iSenderPhone) || !($sBlockReason = DSPS_User::blockedByFilter($iUserPhone, \$sMessage, $g_hRooms{$iRoom}->{last_problem_time}))))
         {
 
             if (
@@ -1523,9 +1560,46 @@ sub sendUserMessageToRoom($$$) {
             # the audience update
             sendSmsPage($iUserPhone, $sAudience) if $bsUpdateAudience;
         }
+
+        if ($sBlockReason) { 
+            $sBlocks = cr($sBlocks, ', ') . $g_hUsers{$iUserPhone}->{name} . ":$sBlockReason";
+        }
     }
+
+    logPage($iSenderPhone, $sMessage, '', $sBlocks);
 }
 
+
+sub logPage($$;$$) {
+    my $iSenderPhone = shift;
+    my $sMessage = shift;
+    my $sAltText = shift || '';
+    my $sMinusPeople = shift || '';
+    my $iRoom = DSPS_Room::findUsersRoom($iSenderPhone);
+    $sMessage = $sMessage ? ": $sMessage" : '';
+    $sMinusPeople = $sMinusPeople ? " - $sMinusPeople" : '';
+
+    if ($iRoom) {
+        my $sRoomType = ($g_hRooms{$iRoom}->{broadcast_speaker} ? 'B' : '') . ($g_hRooms{$iRoom}->{maintenance} ? 'M' : '') .
+            ($g_hRooms{$iRoom}->{ack_mode} ? 'A' : '') . ($g_hRooms{$iRoom}->{ticket_number} ? 'T' : '') . ($g_hRooms{$iRoom}->{escalation_time} ? 'E' : '');
+            $sRoomType = $sRoomType ? "[$sRoomType] " : '';
+
+        if ($g_hRooms{$iRoom}->{broadcast_speaker}) {
+            if ($iSenderPhone eq $g_hRooms{$iRoom}->{broadcast_speaker}) {
+                infoLog($sRoomType . $g_hUsers{$iSenderPhone}->{name} . " -> " . ($sAltText || ("room $iRoom (" . DSPS_Room::roomStatus($iRoom) . "$sMinusPeople)")) . $sMessage);
+            }
+            else {
+                infoLog($sRoomType . $g_hUsers{$iSenderPhone}->{name} . " -> " . ($sAltText || ("(" . $g_hUsers{$g_hRooms{$iRoom}->{broadcast_speaker}}->{name} . ")")) . $sMessage);
+            }
+        }
+        else {
+            infoLog($sRoomType . $g_hUsers{$iSenderPhone}->{name} . " -> " . ($sAltText || ("room $iRoom (" . DSPS_Room::roomStatus($iRoom) . "$sMinusPeople)")) . $sMessage);
+        }
+    }
+    else {
+        infoLog($g_hUsers{$iSenderPhone}->{name} . " $sAltText$sMessage");
+    }
+}
 
 
 sub shouldTell($) {
@@ -1544,6 +1618,7 @@ sub shouldTell($) {
 sub sendSystemMessageToRoom($$$) {
     my ($iSender, $sMessage, $iSilenceModifier) = @_;
     my $iRoom = DSPS_Room::findUsersRoom($iSender);
+    logPage($iSender, '', $sMessage);
 
     # if the user isn't in a room then just send the message to that one person
     unless ($iRoom) {
@@ -1698,14 +1773,17 @@ sub processPageEngine($$) {
     # if the escalation was canceled by a RECOVERY then we prefix the message with '-'
     substr($sOrigMessage, 0, 0) = '-' if DSPS_Escalation::checkEscalationCancel($iSender, $sMessage);
 
+    # determine if the sender's room (if they're in one) is in maintenance mode
+    my $bMaintRoom = $iRoom ? $g_hRooms{$iRoom}->{maintenance} : 0;
+
     # see if there are paging commands to address
     unless (handlePagingCommands($iSender, $sMessage)) {
 
         # drop messages blocked by one of our system filters
-        return 'Blocked by system filter' if (!DSPS_User::humanUsersPhone($iSender) && DSPS_SystemFilter::blockedByFilter($sMessage, $iRoom));
-
-        # determine if the sender's room (if they're in one) is in maintenance mode
-        my $bMaintRoom = $iRoom ? $g_hRooms{$iRoom}->{maintenance} : 0;
+        if (!DSPS_User::humanUsersPhone($iSender) && (my $sFiltered = DSPS_SystemFilter::blockedByFilter($sMessage, $iRoom))) {
+            logPage($iSender, $sMessage, "FILTERED ($sFiltered)");
+            return "Blocked by system filter ($sFiltered)"; 
+        }
 
         # only pull other people in if its a human talking or a non-maintenance room
         if (DSPS_User::humanUsersPhone($iSender) || !$bMaintRoom) {
@@ -1714,7 +1792,7 @@ sub processPageEngine($$) {
             # also sets up escalation timers for oncall mentions
             unless ($bBypass) {
                 if ($g_hUsers{$iSender}->{auto_include}) {
-                    infoLog("redirect is set for user " . $g_hUsers{$iSender}->{name} . "; only adding " . $g_hUsers{$iSender}->{auto_include});
+                    debugLog(D_pageEngine, "redirect is set for user " . $g_hUsers{$iSender}->{name} . "; only adding " . $g_hUsers{$iSender}->{auto_include});
                     $bRoomChanged = processMentions($iSender, $g_hUsers{$iSender}->{auto_include}, $sOrigMessage) || $bRoomChanged;
                 }
                 else {
@@ -1741,6 +1819,9 @@ sub processPageEngine($$) {
             }
         }
 
+        # redetermine user's room after the procesMentions()
+        $iRoom = DSPS_Room::findUsersRoom($iSender);
+
         # check for & potentially set broadcast mode
         if ($sOrigMessage =~ /^\^(.*)/) {
             $sOrigMessage = $1;    # drop carret
@@ -1753,7 +1834,7 @@ sub processPageEngine($$) {
                 }
                 else {
                     $g_hRooms{$iRoom}->{broadcast_speaker} = $iSender;
-                    infoLog("Room $iRoom set to broadcast mode via message from " . $g_hUsers{$iSender}->{name} . " ($iSender)");
+                    debugLog(D_pageEngine, "Room $iRoom set to broadcast mode via message from " . $g_hUsers{$iSender}->{name} . " ($iSender)");
                     $bRoomChanged = "BROADCAST: replies only go to " . $g_hUsers{$iSender}->{name} . ';';
                 }
             }
@@ -1850,7 +1931,7 @@ sub daemonMain() {
             infoLog('daemon starting in ' . ($g_bTEST_RUN ? 'TEST MODE' : 'live mode') . "; listening on $sServerAddr:$iServerPort");
 
             # daemon main loop
-            while (1) {
+            DAEMON_MAIN: while (1) {
 
                 # update daily stats for how many pages we've sent
                 checkpointMetrics();
@@ -1878,6 +1959,7 @@ sub daemonMain() {
                             $oRequest    = $oConnection->get_request();
                             $rVars       = CGI->new($oRequest->decoded_content())->Vars;
                         };
+                        my $sException = $@;
 
                         # it's important to disable the existing alarm *outside* of the above [inner] eval().  otherwise
                         # if the HTTP::Daemon object throws an exception it would exit that eval with the alarm still set.
@@ -1885,11 +1967,18 @@ sub daemonMain() {
                         # two code lines that bracket this comment (above & below).
                         alarm(0);
 
-                        if ($@ eq "alarm\n") {
+                        if ($sException eq "alarm\n") {
                             infoLog("ERROR:  timeout reading request" . ($oConnection ? " from " . $oConnection->peerhost() . ':' . $oConnection->peerport() : ''));
                             next;
                         }
                     };
+                    my $sException = $@;
+
+                    if ($sException) {
+                        infoLog("EXCEPTION (inner): $sException");
+                        sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected - exception in daemonMain (inner)\n\n$sException\n\ngrep dsps /var/log/syslog\n");
+                        next DAEMON_MAIN;
+                    }
 
                     next unless ((defined $oRequest) && $oRequest);
 
@@ -1912,7 +2001,7 @@ sub daemonMain() {
 
                     eval {
                         my $sLiveStatus = $g_bTEST_RUN ? "   *** DAEMON IN TEST MODE - NOT LIVE ***\n" : '';
-                        infoLog(($bAuthOk eq 1 ? "" : $bAuthOk ? "[Auth $bAuthOk] " : "[Auth FAILED] ")
+                        debugLog(D_pageEngine, ($bAuthOk eq 1 ? "" : $bAuthOk ? "[Auth $bAuthOk] " : "[Auth FAILED] ")
                             . $oRequest->uri->path
                               . ' request from '
                               . $oConnection->peerhost() . ':'
@@ -1976,10 +2065,12 @@ sub daemonMain() {
 
                         $oConnection->close();
                     };
+                    $sException = $@;
 
-                    if ($@) {
-                        infoLog("ERROR: $@ (caught & continuing)");
+                    if ($sException) {
+                        infoLog("EXCEPTION (middle): $sException [caught & continuing]");
                         $oConnection->close() if ($oConnection);
+                        sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected - exception in daemonMain (middle)\n\n$sException\n\ngrep dsps /var/log/syslog\n");
                     }
                 }
 
@@ -1996,9 +2087,9 @@ sub daemonMain() {
 
         if ($@) {
             my $sException = $@;
-            infoLog("EXCEPTION: $sException");
+            infoLog("EXCEPTION (outer): $sException");
             infoLog("restarting daemonMain");
-            sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected - exception in daemonMain\n\n$sException\n\nDaemon auto-restarting.");
+            sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected - exception in daemonMain (outer)\n\n$sException\n\nDaemon auto-restarting.");
         }
     }
 
@@ -2032,10 +2123,10 @@ sub daemonAlreadyRunning() {
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub showUsage() {
     print
-"dsps [-d | -s | -e | -i | -p escalation] [-c config_file] [-u user] [message]\n   -d  (re)start the paging daemon in the background\n   -t  start the paging daemon in the foreground (for testing)\n   -s  submit a message (pipe to stdin or via CLI)\n";
+"dsps [-d | -s | -e | -i | -p escalation] [-c config_file] [-u user] [-x user] [message]\n   -d  (re)start the paging daemon in the background\n   -t  start the paging daemon in the foreground (for testing)\n   -s  submit a message (pipe to stdin or via CLI)\n";
     print "   -e  submit an email (pipe to stdin or via CLI), i.e. ignore headers\n   -u  specify the submitting paging user\n   -p  print current oncall schedule for a given escalation\n";
     print
-"   -f  fast message submission to the daemon; don't wait for processing\n   -c  specify a config filename (default /etc/dsps.conf)\n   -i  show current status (info)\n   -v  show current version\n";
+"   -f  fast message submission to the daemon; don't wait for processing\n   -c  specify a config filename (default /etc/dsps.conf)\n   -x  exclusive page user (ignore rooms & daemon)\n   -i  show current status (info)\n   -v  show current version\n";
 }
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -2085,6 +2176,21 @@ sub readValidConfigOrDie($) {
     }
 }
 
+
+sub exclusivePage($$) {
+    my $sPerson = shift;
+    my $sMessage = shift;
+
+    if ($sPerson && (my $sMatchingUser = DSPS_User::matchUserByRegex($sPerson))) {
+        infoLog("exclusively paging " . $g_hUsers{$sMatchingUser}->{name} . ": $sMessage");
+        sendSmsPage($sMatchingUser, '!> ' . $sMessage);    
+    }
+    else {
+        print infoLog("no matching user found for '$sPerson'");
+    }
+}
+
+
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # This is the main logic for the client part of
 # of DSPS (the companion to daemonMain()).
@@ -2105,6 +2211,7 @@ sub clientStartup() {
     my $bVersion        = 0;
     my $sUser           = '';
     my $sEscalation     = '';
+    my $sExclusivePerson= '';
 
     GetOptions(
         'd'        => \$bCmdDaemon,
@@ -2112,6 +2219,7 @@ sub clientStartup() {
         's'        => \$bCmdSubmit,
         'e'        => \$bCmdSubmitEmail,
         'f'        => \$bFireFast,
+        'x=s'      => \$sExclusivePerson,
         'i'        => \$bCmdStatus,
         'v'        => \$bVersion,
         'config=s' => \$g_sConfigFilename,
@@ -2143,13 +2251,24 @@ sub clientStartup() {
         }
     }
 
-    if ($bCmdSubmit || $bCmdSubmitEmail) {
+    if ($bCmdSubmit || $bCmdSubmitEmail || $sExclusivePerson) {
         readValidConfigOrDie($g_sConfigFilename);
 
         if (!$sMessage) {
-            print infoLog("With submit you have to specify a message to send.");
+            print infoLog("With " . ($sExclusivePerson ? 'Exclusive Person' : 'submit') . " you have to specify a message to send.");
             exit(1);
         }
+
+        if ($sExclusivePerson) {
+            if ($bCmdSubmit || $bCmdSubmitEmail) {
+                print infoLog("Exclusive Person (-x) is mutually-exclusive with raw message submission (-s) and email submission (-e).");
+                exit(1);
+            }
+            
+            exclusivePage($sExclusivePerson, $sMessage);
+            exit(1); 
+        }
+        
 
         if ($bCmdSubmit && $bCmdSubmitEmail) {
             print infoLog("Raw message submission (-s) and email submission (-e) are mutually-exclusive.");
@@ -2157,7 +2276,7 @@ sub clientStartup() {
         }
 
         unless ($sUser) {
-            print infoLog("Messages have to be submitted from a specific paging using (-u).");
+            print infoLog("Messages have to be submitted from a specific paging user (-u).");
             exit(1);
         }
 
@@ -2240,18 +2359,18 @@ sub clientStartup() {
     }
 
     if ($bCmdDaemon || $bRunForeground) {
-        my $bRestart = 0;
-        if (my $iPID = daemonAlreadyRunning()) {
-            my $sOutput = infoLog("Killing existing daemon (pid=$iPID)");
-            print $sOutput if $bRunForeground;
-            kill('TERM', $iPID);
-            $bRestart = 1;
-            sleep(1);
+        if (my $iDaemonPID = daemonAlreadyRunning()) {
 
-            if (daemonAlreadyRunning()) {
-                print infoLog("ERROR:  daemon already running - can't seem to kill it");
-                exit(1);
+            # request to startup in the background when a daemon is already running in the background
+            if ($bCmdDaemon) {
+                print STDERR "restarting previously running background dsps daemon via SIGHUP...\n";
+                kill('HUP', $iDaemonPID);
+                exit(0);
             }
+
+            # request to startup in foreground when a daemon is already running in the background
+            kill('TERM', $iDaemonPID);
+            sleep(1);
         }
 
         readValidConfigOrDie($g_sConfigFilename);
@@ -2263,17 +2382,11 @@ sub clientStartup() {
         }
         else {
             $g_bTEST_RUN = 3 unless $g_bTEST_RUN;    # i.e. if already hardcoded to '1' then don't override that
-            print "  *** RUNNING IN FOREGROUND (\$g_bTEST_RUN=$g_bTEST_RUN) ***\n";
+            print "  *** RUNNING IN FOREGROUND ***\n";
             daemonMain();
         }
         exit(0);
     }
-
-    #if ($bCmdRunTests) {
-    #    readValidConfigOrDie('config.test');
-    #    DSPS_Test::startTests();
-    #    exit(0);
-    #}
 
     showUsage();
 }
