@@ -1,13 +1,10 @@
 #!/bin/sh
 
-# Debian init.d file for pagingd
-
-
 PATH=/usr/local/sbin:/usr/local/bin:/usr/local/bin/paging:/sbin:/bin:/usr/sbin:/usr/bin
-DAEMON=/usr/local/bin/paging/pagingd
-NAME=pagingd
-DESC=pagingd
-PIDFILE=/tmp/$NAME.pid
+DAEMON=/usr/local/bin/dsps3/dsps
+NAME=dsps
+DESC=dsps
+PIDFILE=/tmp/.$NAME.pid
 
 test -x $DAEMON || exit 0
 
@@ -23,7 +20,7 @@ set -e
 case "$1" in
   start)
         log_daemon_msg "Starting $DESC" "$NAME"
-        start_daemon -p $PIDFILE $DAEMON
+        start_daemon -p $PIDFILE $DAEMON -d
         log_end_msg $?
         ;;
   stop)
@@ -37,9 +34,9 @@ case "$1" in
         log_end_msg $?
         ;;
   restart)
-        $0 stop
-        sleep 1
-        $0 start
+        log_daemon_msg "Restarting $DESC" "$NAME"
+        start_daemon -p $PIDFILE $DAEMON -d
+        log_end_msg $?
         ;;
   *)
         log_failure_msg "Usage: $N {start|stop|restart|reload|force-reload}" 
