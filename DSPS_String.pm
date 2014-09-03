@@ -13,7 +13,7 @@ our @EXPORT = (
     'S_PullSyntax',       'S_SmartAlreadyF',  'S_SmartFiltered',   'E_SwapSuccess4',     'S_EmailSent1',        'S_NeedEmail',         'E_VacationSet2',      'E_VacationCancel1',
     'E_VacationElapsed1', 'S_HelpGeneral',    'S_HelpCommandsA',   'S_HelpCommandsB',    'S_HelpSyntax',        'C_MetricLog',         'S_NoSuchTrigger',     'S_AutoNagiosMute',
     'S_SummaryReminder',  'S_SummaryTooLate', 'E_EscalationPrep3', 'E_EscalationEsc4',   'S_VacaNeedTime',      'S_NoVacations',       'S_AmbiguousIgnored1', 'S_AmbiguousReject2',
-    '@A_HelpTopics'
+    '@A_HelpTopics',
 );
 
 use constant S_NoPermission => "You don't have permission for this command.";

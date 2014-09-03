@@ -384,29 +384,33 @@ sub timeLength($) {
 sub logRoom($) {
     my $iRoom    = shift;
     my $sLogFile = main::getLogRoomsTo();
+    use constant ONLY_LOG_SUMMARIZED => 1;
 
     if ((defined $g_hRooms{$iRoom}) && $sLogFile) {
         open(LOG, ">>$sLogFile") || return infoLog("Unable to write to $sLogFile");
-        print LOG localtime($g_hRooms{$iRoom}->{creation_time}) . " for " . timeLength(time() - $g_hRooms{$iRoom}->{creation_time}) . "\t";
-        print LOG roomStatus($iRoom, 0, 1, 1) . "\n";
 
-        if ($g_hRooms{$iRoom}->{summary} && ($g_hRooms{$iRoom}->{summary} =~ /^(.*?)\s*;\s*(.*)$/)) {
-            my $sDesc = ucfirst($1);
-            my $sImpct = ucfirst($2);
-            my $sDetail = ${ $g_hRooms{$iRoom}->{history} }[0];
-            $sDetail =~ s/\n/ /g;
-            print LOG "\n\t* $sDesc\n\n";
-            print LOG "Description: $sDesc\n";
-            print LOG "Station Impact: $sImpct\n";
-        }
-        else {
-            foreach my $sHistory (@{ $g_hRooms{$iRoom}->{history} }) {
-                $sHistory =~ s/\n/; /g;
-                print LOG $sHistory . "\n";
+        if (($g_hRooms{$iRoom}->{summary} && ($g_hRooms{$iRoom}->{summary} =~ /^(.*?)\s*;\s*(.*)$/)) || !ONLY_LOG_SUMMARIZED) {
+            print LOG localtime($g_hRooms{$iRoom}->{creation_time}) . " for " . timeLength(time() - $g_hRooms{$iRoom}->{creation_time}) . "\t";
+            print LOG roomStatus($iRoom, 0, 1, 1) . "\n";
+
+            if ($g_hRooms{$iRoom}->{summary} && ($g_hRooms{$iRoom}->{summary} =~ /^(.*?)\s*;\s*(.*)$/)) {
+                my $sDesc   = ucfirst($1);
+                my $sImpct  = ucfirst($2);
+                my $sDetail = ${ $g_hRooms{$iRoom}->{history} }[0];
+                $sDetail =~ s/\n/ /g;
+                print LOG "\n\t* $sDetail\n\n";
+                print LOG "Description: $sDesc\n";
+                print LOG "Station Impact: $sImpct\n";
             }
-        }
+            else {
+                foreach my $sHistory (@{ $g_hRooms{$iRoom}->{history} }) {
+                    $sHistory =~ s/\n/; /g;
+                    print LOG $sHistory . "\n";
+                }
+            }
 
-        print LOG "\n--------------------------------------------------------------------------------\n";
+            print LOG "\n--------------------------------------------------------------------------------\n";
+        }
 
         close(LOG);
     }

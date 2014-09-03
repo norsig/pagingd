@@ -70,7 +70,7 @@ sub getAutoReply($) {
             return $g_hUsers{$iUser}->{auto_reply_text};
         }
         else {
-            infoLog("auto reply for user " . $g_hUsers{$iUser}->{name} . " has expired; deleting.");
+            debugLog(D_users, "auto reply for user " . $g_hUsers{$iUser}->{name} . " has expired; deleting.");
             $g_hUsers{$iUser}->{auto_reply_expire} = 0;
             $g_hUsers{$iUser}->{auto_reply_text}   = '';
         }
@@ -212,7 +212,7 @@ sub usersHealthCheck() {
     foreach my $iUser (keys %g_hUsers) {
         if ($g_hUsers{$iUser}->{vacation_end} && ($g_hUsers{$iUser}->{vacation_end} <= $iNow)) {
             $g_hUsers{$iUser}->{vacation_end} = 0;
-            infoLog($g_hUsers{$iUser}->{name} . "'s vacation time has expired");
+            debugLog(D_users, $g_hUsers{$iUser}->{name} . "'s vacation time has expired");
             main::sendEmail(main::getUsersEscalationsEmails($iUser), main::getAdminEmail(), sv(E_VacationElapsed1, $g_hUsers{$iUser}->{name}));
         }
     }
@@ -247,8 +247,7 @@ sub usersHealthCheck() {
             }
 
             if ($sData =~ /^\s*$/) {
-                delete $hDedupeByMessage{
-                    $sMessage};
+                delete $hDedupeByMessage{$sMessage};
             }
             else {
                 $hDedupeByMessage{$sMessage} = $sData;
@@ -276,8 +275,8 @@ sub blockedByFilter($$$) {
 
     # FITLER:  Recoveries per user
     if ($sRecoveryRegex && ($g_hUsers{$iPhone}->{filter_recoveries} == 1) && (($sMessage =~ /$sRecoveryRegex/) || ($sMessage =~ /$sRearmedRegex/))) {
-        infoLog("blocked for " . $g_hUsers{$iPhone}->{name} . " ($iPhone) [NoRecovery]: $sMessage");
-        return 1;
+        debugLog(D_users, "blocked for " . $g_hUsers{$iPhone}->{name} . " ($iPhone) [NoRecovery]: $sMessage");
+        return 'noRecovery';
     }
 
     # FITLER:  Smart recoveries per user
@@ -287,10 +286,10 @@ sub blockedByFilter($$$) {
         && ($g_hUsers{$iPhone}->{filter_recoveries} == 2)
         && (($sMessage =~ /$sRecoveryRegex/) || ($sMessage =~ /$sRearmedRegex/))
         && !isDuringWakingHours()
-        && ($iNow - $iLastProblemTime > 180))
+        && ($iNow - $iLastProblemTime > 300))
     {
-        infoLog("blocked for " . $g_hUsers{$iPhone}->{name} . " ($iPhone) [SmartRecovery]: $sMessage");
-        return 1;
+        debugLog(D_users, "blocked for " . $g_hUsers{$iPhone}->{name} . " ($iPhone) [SmartRecovery]: $sMessage");
+        return 'smartRecovery';
     }
 
     # FILTER:  Rate Throttling
@@ -314,8 +313,8 @@ sub blockedByFilter($$$) {
             }
 
             if ($iCount > THROTTLE_PAGES - 1) {
-                infoLog("PAGE THROTTLED ($iPhone): $sMessage");
-                return 1;
+                debugLog(D_users, "PAGE THROTTLED ($iPhone): $sMessage");
+                return 'throttled';
             }
             elsif (($iCount == THROTTLE_PAGES - 1) && ($sMessage !~ /^Throttled::/)) {
                 $$rMessage = 'Throttled::' . $sMessage;

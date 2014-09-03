@@ -50,7 +50,7 @@ sub primeEscalation($$$) {
     # are there enough other people in the room to skip the escalation?
     my $iOccupants = () = DSPS_Room::roomStatus($iRoom, 1, 1);
     if ($iOccupants >= $g_hEscalations{$sEscName}->{min_to_abort}) {
-        infoLog($g_hUsers{$iOncallPhone}->{name} . " is already in room $iRoom which has $iOccupants people" . " - aborting $sEscName escalation");
+        debugLog(D_escalations, $g_hUsers{$iOncallPhone}->{name} . " is already in room $iRoom which has $iOccupants people" . " - aborting $sEscName escalation");
         return $bRoomChanged;
     }
 
@@ -99,7 +99,8 @@ sub primeEscalation($$$) {
         main::sendEmail($g_hEscalations{$sEscName}->{alert_email}, '', sv(E_EscalationPrep3, $sSubject, $sEscName, $sMessage) . ($g_hEscalations{$sEscName}->{rt_queue} ? $sRTSuffix : ''));
     }
 
-    infoLog("escalation timer of "
+    debugLog(D_escalations,
+            "escalation timer of "
           . $g_hEscalations{$sEscName}->{timer}
           . " seconds started for room $iRoom via $sEscName ("
           . $g_hUsers{$iOncallPhone}->{name} . ' -> '
@@ -251,13 +252,13 @@ sub checkEscalationCancel($$) {
             $g_hRooms{$iRoom}->{escalation_name} = '';
 
             if (DSPS_User::humanUsersPhone($iSender)) {
-                infoLog("escalation for room $iRoom canceled by " . $g_hUsers{$iSender}->{name});
+                debugLog(D_escalations, "escalation for room $iRoom canceled by " . $g_hUsers{$iSender}->{name});
                 main::sendSmsPage($iSender, t($g_hEscalations{$sEscName}->{cancel_msg}))
                   if (defined $g_hEscalations{$sEscName}) && ($g_hEscalations{$sEscName}->{cancel_msg});
 
             }
             else {
-                infoLog("escalation for room $iRoom canceled by recovery");
+                debugLog(D_escalations, "escalation for room $iRoom canceled by recovery");
                 return 1;    # means we need to modify the message with a '-' prefix
             }
         }
@@ -303,7 +304,7 @@ sub checkEscalationTimes() {
             next;
         }
 
-        infoLog("escalation timer for room $iRoom has expired; firing escalation");
+        debugLog(D_escalations, "escalation timer for room $iRoom has expired; firing escalation");
 
         # add the extra escalation people to the room
         main::processMentions($g_hRooms{$iRoom}->{escalation_orig_sender}, $g_hRooms{$iRoom}->{escalation_to}, $g_hRooms{$iRoom}->{escalation_to});
@@ -563,8 +564,12 @@ sub swapSchedules($$;$) {
     if (my $sError = main::writeConfig()) {
         $g_hEscalations{$sTargetEsc}->{schedule} = $rFallbackSchedule;
         main::sendSmsPage($iSender, t("Swap failed due to system error; your admin has been notified by email."));
-        main::sendEmail(main::getAdminEmail(), '', "Subject: DSPS Error in DSPS_Config::writeConfig()\n\n" . $g_hUsers{$iSender}->{name} . " attempted a schedule swap with " . $g_hUsers{$iSwapee}->{name} . ".\n" .
-            "It failed while attempting to write the new config file to disk:\n$sError"); 
+        main::sendEmail(main::getAdminEmail(), '',
+                "Subject: DSPS Error in DSPS_Config::writeConfig()\n\n"
+              . $g_hUsers{$iSender}->{name}
+              . " attempted a schedule swap with "
+              . $g_hUsers{$iSwapee}->{name} . ".\n"
+              . "It failed while attempting to write the new config file to disk:\n$sError");
     }
     else {
         main::sendSmsPage($iSender, t(getFullOncallSchedule($sTargetEsc)));

@@ -582,7 +582,7 @@ sub readConfig(;$) {
 
 sub writeConfig() {
     my $sConfigFileName = shift || "$sConfigPath/dsps.conf";
-    open(CFG, $sConfigFileName)        || return 0;
+    open(CFG, $sConfigFileName)      || return 0;
     open(NEW, ">/tmp/dsps.conf.new") || return infoLog("Unable to write new config file (/tmp/dsps.conf.new)");
 
     my $sSection       = '';
