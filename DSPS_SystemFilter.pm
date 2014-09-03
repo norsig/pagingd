@@ -73,7 +73,7 @@ sub blockedByFilter($$) {
             && ($sMessage =~ /$sThisRegex/i))
         {
             debugLog(D_filters, "message matched Regex filter (" . $rFilterRegex{$iRegexFilterID}->{regex} . ")");
-    #        return "regex";
+            return "regex";
         }
 
         rmRegexFilter($rFilterRegex{$iRegexFilterID}->{regex}) if ($rFilterRegex{$iRegexFilterID}->{till} < $iNow);
