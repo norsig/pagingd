@@ -7,11 +7,39 @@ use DSPS_String;
 use Date::Calc qw(:all);
 
 use base 'Exporter';
-our @EXPORT = ('ONEWEEK', 'ROOM_LENGTH', 'parseUserTime', 'parseDateTime', 'isDuringWakingHours', 'prettyDateTime', 'prettyPhone', 'caselessHashLookup', 'parseRegex', 'dequote');
+our @EXPORT = ('ONEWEEK', 'ROOM_LENGTH', 'parseUserTime', 'parseDateTime', 'isDuringWakingHours', 'prettyDateTime', 'prettyPhone', 'caselessHashLookup', 'parseRegex', 'dequote', 'prettyDuration');
 
 use constant ONEWEEK     => 604800;
 use constant ROOM_LENGTH => 3600;
 
+
+sub prettyDuration($;$) {
+    my $iInitialSeconds = shift;
+    my $bDropSeconds = shift || 0;
+
+    my %hConversion = (
+        31557600 => 'year',
+        2419200 => 'month',
+        604800 => 'week',
+        86400 => 'day',
+        3600 => 'hour',
+        60 => 'minute',
+        1 => 'second');
+
+    my $sResult = '';
+    my $iWorkingValue = $iInitialSeconds;
+    foreach my $iDiv (reverse sort { $a <=> $b } keys %hConversion) {
+        last if ($bDropSeconds && $iDiv == 1);
+
+        my $iValue = int($iWorkingValue / $iDiv);
+        if ($iValue >= 1) {
+            $iWorkingValue = $iWorkingValue % $iDiv;
+            $sResult .= ($sResult ? ', ' : '') . $iValue . ' ' . $hConversion{$iDiv} . ($iValue == 1 ? '' : 's');
+        }
+    }
+
+    return $sResult;
+}
 
 
 sub parseRegex($) {
@@ -41,10 +69,11 @@ sub isDuringWakingHours() {
 
 
 
-sub prettyDateTime($) {
-    my $sTime = shift || time();
+sub prettyDateTime($;$) {
+    my $sTime = shift;
+    my $bNoYear = shift || 0;
     my ($iMon, $iD, $iY, $iH, $iMin) = (localtime($sTime))[4, 3, 5, 2, 1];
-    return sprintf('%02d/%02d/%d@%02d:%02d', $iMon + 1, $iD, $iY + 1900, $iH, $iMin);
+    return $bNoYear ? sprintf('%02d/%02d@%02d:%02d', $iMon + 1, $iD, $iH, $iMin) : sprintf('%02d/%02d/%d@%02d:%02d', $iMon + 1, $iD, $iY + 1900, $iH, $iMin);
 }
 
 

@@ -48,7 +48,7 @@ sub primeEscalation($$$) {
     return $bRoomChanged if (main::getRecoveryRegex() && $sMessage =~ main::getRecoveryRegex());
 
     # are there enough other people in the room to skip the escalation?
-    my $iOccupants = () = DSPS_Room::roomStatus($iRoom, 1, 1);
+    my $iOccupants = () = DSPS_Room::roomStatusIndividual($iRoom, 1, 1);
     if ($iOccupants >= $g_hEscalations{$sEscName}->{min_to_abort}) {
         debugLog(D_escalations, $g_hUsers{$iOncallPhone}->{name} . " is already in room $iRoom which has $iOccupants people" . " - aborting $sEscName escalation");
         return $bRoomChanged;

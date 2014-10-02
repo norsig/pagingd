@@ -17,6 +17,7 @@ our %hDefaultCmdPermission = (
     '?oncall'     => 20,
     '?filters'    => 20,
     '?triggers'   => 20,
+    '?recent'     => 35,
     ':email'      => 10,
     ':macro'      => 10,
     ':autoreply'  => 15,

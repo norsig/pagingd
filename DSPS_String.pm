@@ -13,13 +13,14 @@ our @EXPORT = (
     'S_PullSyntax',       'S_SmartAlreadyF',  'S_SmartFiltered',   'E_SwapSuccess4',     'S_EmailSent1',        'S_NeedEmail',         'E_VacationSet2',      'E_VacationCancel1',
     'E_VacationElapsed1', 'S_HelpGeneral',    'S_HelpCommandsA',   'S_HelpCommandsB',    'S_HelpSyntax',        'C_MetricLog',         'S_NoSuchTrigger',     'S_AutoNagiosMute',
     'S_SummaryReminder',  'S_SummaryTooLate', 'E_EscalationPrep3', 'E_EscalationEsc4',   'S_VacaNeedTime',      'S_NoVacations',       'S_AmbiguousIgnored1', 'S_AmbiguousReject2',
-    '@A_HelpTopics',
+    'S_NoRecent', '@A_HelpTopics',
 );
 
 use constant S_NoPermission => "You don't have permission for this command.";
 use constant S_NoReBroadcast =>
   "This room is already in broadcast mode from another sender & you don't have permission to override.  Your message was sent only to the original broadcaster.";
 use constant S_NoConversations   => 'There are currently no rooms or conversations.';
+use constant S_NoRecent          => 'There are no recent conversations logged.';
 use constant S_AudienceUpdate    => 'Audience is now';
 use constant S_YoureAlone        => "There's no one in this conversation other than you.  Mention a \@name or \@group to specify a recipient.";
 use constant S_NotInRoom         => "You're not currently in a conversation/room.";
@@ -107,7 +108,9 @@ our @A_HelpTopics = (
 
     ":ack (enable room ack)",
 
-    "?oncall\n" . "?rooms\n" . "?groups\n" . "?GROUP\n" . "?NAME"
+    "?oncall\n" . "?rooms\n" . "?groups\n" . "?GROUP\n" . "?NAME",
+
+    "?recents (show recent rooms)",
 );
 
 # substitute in variables
