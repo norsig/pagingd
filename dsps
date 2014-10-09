@@ -72,13 +72,14 @@ use strict;
 #-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 #our $g_iDebugTopics = D_all & ~D_users & ~D_state & ~D_configRead & ~D_rooms;
 our $g_iDebugTopics = 0;
+our $g_iTestingDebugTopics = D_all & ~D_users & ~D_state & ~D_configRead & ~D_rooms;
 
 # drop root privs to become 'nobody'
 $< = $> = 65534 unless ($< == 65534);
 
 # process name
 my $g_sOriginalPath = $0;
-$0 = 'dsps: client process (perl)';
+$0 = "dsps: client process (perl) $g_sOriginalPath @ARGV";
 
 # configure signal handlers
 my $tSignalSet        = POSIX::SigSet->new();
@@ -146,7 +147,6 @@ sub handlerSigHup() {
 sub handlerSigInt() {
     print "\n" . infoLog('daemon caught SIGINT (cntrl-C) - exiting');
     print "*** NOTE: Don't forget to restart the daemon with -d\n";
-    print "*** If you altered the value of \$g_bTEST_RUN set it back to 0 first.\n";
     if ($g_tListenerSocket) {
         $g_tListenerSocket->shutdown(2);
         $g_tListenerSocket->close();
@@ -310,7 +310,7 @@ sub rtCommand($;$) {
     # we fork into the background and continue on immediately.
     if ($sInput) {
         unless (fork()) {
-            $0 = 'dsps: rt update process (perl)';
+            $0 = "dsps: rt update process (perl) $g_sOriginalPath";
 
             # close the listening socket in the child
             $g_tListenerSocket->close();
@@ -341,7 +341,7 @@ sub forkExecCommand($) {
     return infoLog("FAKE EXEC Trigger: $sCommand") if $g_bTEST_RUN;
 
     unless (fork()) {
-        $0 = 'dsps: exec (perl)';
+        $0 = "dsps: exec (perl) $g_sOriginalPath";
 
         # close the listening socket in the child
         $g_tListenerSocket->close();
@@ -504,7 +504,7 @@ sub sendSmsPage($$) {
     # a large number of children and go out near simultaneously
     return if fork();    # parent
 
-    $0 = 'dsps: page submission process (perl)';
+    $0 = "dsps: page submission process (perl) $g_sOriginalPath";
 
     # close the listening socket in the child
     $g_tListenerSocket->close() if $g_tListenerSocket;    # socket not defined when called from exclusivePage()
@@ -538,7 +538,9 @@ sub sendSmsPage($$) {
 
     unless ($tResponse->is_success) {
         if (defined($g_hConfigOptions{fallback_email}) && open(MAIL, "| /usr/sbin/sendmail " . $g_hConfigOptions{fallback_email})) {
-            print MAIL "DSPS can't send via gateway provider!";
+            print MAIL "DSPS can't send via gateway provider!\n\n";
+            print MAIL "To: $iCellNumber\n";
+            print MAIL "$sMessage\n";
             close(MAIL);
 
             if (open(ERROR_LOG, ">>/tmp/dsps.gateway.error")) {
@@ -615,6 +617,16 @@ sub handlePagingCommands($$) {
             return 1;
         }
 
+        # ask for recent rooms
+        if ($sCommand =~ /^\?recent/) {
+            if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, '?recent')) {
+                DSPS_Room::sendRecentRooms($iSender);
+                logPage($iSender, '', "received recent rooms");
+            }
+
+            return 1;
+        }
+
         # block all nagios pages
         if ($sCommand eq ':nonagios') {
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':nonagios')) {
@@ -659,22 +671,29 @@ sub handlePagingCommands($$) {
 
         # set a maintenance window room
         if ($sCommand eq ':maint') {
-            my $bRoomChanged = 0;
+            my $bRoomStatus = 0;
 
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':maint')) {
+                my $sMaintUser = (defined($sParams) && $sParams) ? '@' . $sParams : (defined($g_hConfigOptions{default_maint}) && $g_hConfigOptions{default_maint}) ? '@' . $g_hConfigOptions{default_maint} : '';
 
-                # pull in the automation user(s) - either the default or whoever they specify
-                if (defined($sParams) && $sParams) {
-                    $bRoomChanged = processMentions($iSender, $sParams, $sParams, 1);
-                }
-                else {
-                    $bRoomChanged = processMentions($iSender, $g_hConfigOptions{default_maint} ? $g_hConfigOptions{default_maint} : '', $g_hConfigOptions{default_maint}, 1);
+                if ($sMaintUser && (my $iUserCell = DSPS_User::matchUserByRegex($sMaintUser))) {
+                    my $iUserRoom = DSPS_Room::findUsersRoom($iUserCell);
+                    my $iSenderRoom = DSPS_Room::findUsersRoom($iSender);
+
+                    if ($iSenderRoom && $iSenderRoom == $iUserRoom && $g_hRooms{$iSenderRoom}->{maintenance}) {
+                        sendSmsPage($iSender, t("This room is already in maintenance mode and " . $g_hUsers{$iUserCell}->{name} . " is part of the audience."));
+                        return 1;
+                    }
                 }
 
-                if ($bRoomChanged) {
+                # pull in the maint user(s)
+                $bRoomStatus = processMentions($iSender, $sMaintUser, $sMaintUser, 1);
+
+                if ($bRoomStatus) {
 
                     # put the room in maintenancd mode
-                    $g_hRooms{ DSPS_Room::findUsersRoom($iSender) }->{maintenance} = 1;
+                    # note that we call findUsersRoom() again because it may have changed after processMentions()
+                    $g_hRooms{DSPS_Room::findUsersRoom($iSender)}->{maintenance} = 1;
 
                     sendSystemMessageToRoom($iSender, S_NowInMaint, $iSilenceModifier);
                 }
@@ -1342,11 +1361,15 @@ sub handlePagingCommands($$) {
                     }
 
                     logPage($iSender, '', "sent +history to " . $g_hUsers{$iUser}->{name});
+                    sendSmsPage($iSender, t("Room history (up to the last 5 messages) has been sent to " . $g_hUsers{$iUser}->{name}));
+
+                    # pull that person into the room
+                    processMentions($iSender, '@' . $g_hUsers{$iUser}->{name}, '@' . $g_hUsers{$iUser}->{name}, 0);
                     last;
                 }
             }
 
-            return 0 if $iFoundRecipient;
+            return 1 if $iFoundRecipient;
             sendSmsPage($iSender, t("There's no user named $sHistoryUser.  Note, you can't send room history to a group or alias."));
         }
         else {
@@ -1382,6 +1405,7 @@ sub processMentions($$$;$) {
     my $sRealMessage        = shift;
     my $bIncludeSystemUsers = shift || 0;
     my $bRoomChanged        = 0;
+    my $bFoundSomeone       = 0;
     my $sAt                 = $g_hConfigOptions{require_at} ? '@' : '\b';
 
     # look for alias mentions
@@ -1391,8 +1415,9 @@ sub processMentions($$$;$) {
             debugLog(D_pageEngine, "found mention of alias $sAlias");
             my $sOrigMessage = $sScanMessage;
             $sScanMessage =~ s/$sAt($sAlias)\b/$g_hAliases{$sAlias}->{referent}/gi;
-            $bRoomChanged = processMentions($sSender, $sScanMessage, $sRealMessage) || $bRoomChanged;
+            $bRoomChanged = (processMentions($sSender, $sScanMessage, $sRealMessage) > 0) || $bRoomChanged;
             $sScanMessage = $sOrigMessage;
+            $bFoundSomeone = 1;
         }
     }
 
@@ -1413,6 +1438,7 @@ sub processMentions($$$;$) {
                 }
 
                 $bRoomChanged = DSPS_Room::combinePeoplesRooms($g_hUsers{$sSender}, $g_hUsers{$iUser}) || $bRoomChanged;
+                $bFoundSomeone = 1;
             }
         }
     }
@@ -1424,6 +1450,7 @@ sub processMentions($$$;$) {
         if ($sScanMessage =~ /$sAt($g_hUsers{$iUserPhone}->{regex})\b/i) {
             debugLog(D_pageEngine, "found mention of user " . $g_hUsers{$iUserPhone}->{name} . " ($iUserPhone)");
             $bRoomChanged = DSPS_Room::combinePeoplesRooms($g_hUsers{$sSender}, $g_hUsers{$iUserPhone}) || $bRoomChanged;
+            $bFoundSomeone = 1;
         }
     }
 
@@ -1434,10 +1461,11 @@ sub processMentions($$$;$) {
         if ($sScanMessage =~ /$sAt($sEscName)\b/i) {
             debugLog(D_pageEngine, "found mention of escalation $sEscName");
             $bRoomChanged = DSPS_Escalation::primeEscalation($sSender, $sEscName, $sRealMessage) || $bRoomChanged;
+            $bFoundSomeone = 1;
         }
     }
 
-    return $bRoomChanged;
+    return ($bRoomChanged ? 1 : $bFoundSomeone ? -1 : 0);
 }
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -1800,11 +1828,11 @@ sub processPageEngine($$) {
             unless ($bBypass) {
                 if ($g_hUsers{$iSender}->{auto_include}) {
                     debugLog(D_pageEngine, "redirect is set for user " . $g_hUsers{$iSender}->{name} . "; only adding " . $g_hUsers{$iSender}->{auto_include});
-                    $bRoomChanged = processMentions($iSender, $g_hUsers{$iSender}->{auto_include}, $sOrigMessage) || $bRoomChanged;
+                    $bRoomChanged = (processMentions($iSender, $g_hUsers{$iSender}->{auto_include}, $sOrigMessage) > 0) || $bRoomChanged;
                 }
                 else {
                     DSPS_Room::checkpointOccupants($iRoom) if $iRoom;
-                    $bRoomChanged = processMentions($iSender, $sMessage, $sOrigMessage) || $bRoomChanged;
+                    $bRoomChanged = (processMentions($iSender, $sMessage, $sOrigMessage) > 0) || $bRoomChanged;
 
                     # at this point $iRoom is the room the sender was in when this function started.  it may be 0 if the person wasn't in
                     # a room, even if the above processMention() has now put them in a room.  but if they weren't in a room at the start
@@ -1934,7 +1962,7 @@ sub daemonMain() {
         POSIX::sigaction(&POSIX::SIGINT,  $tSignalActionInt);
 
         eval {
-            $0 = 'dsps: ' . ($g_bTEST_RUN ? 'test' : 'live') . ' server process (perl)';
+            $0 = 'dsps: ' . ($g_bTEST_RUN ? 'test' : 'live') . " server process (perl) $g_sOriginalPath -d";
             infoLog('daemon starting in ' . ($g_bTEST_RUN ? 'TEST MODE' : 'live mode') . "; listening on $sServerAddr:$iServerPort");
 
             # daemon main loop
@@ -2063,7 +2091,8 @@ sub daemonMain() {
                             # status request from the client CLI
                             elsif ($oRequest->uri->path eq '/status') {
                                 my $sTriggers = DSPS_Trigger::triggerStatus();
-                                my $sStatus = "ROOM OCCUPANTS\n" . DSPS_Room::roomStatus(0) . "\n\n" . filterStatus(0) . ($sTriggers ? "\n$sTriggers" : '');
+                                my $sStatus = "CURRENT ROOM OCCUPANTS\n" . DSPS_Room::roomStatus(0) . "\n\n";
+                                $sStatus .= "RECENT ROOMS\n" . DSPS_Room::sendRecentRooms(0) . "\n" .  filterStatus(0) . ($sTriggers ? "\n$sTriggers" : '');
                                 $oConnection->send_response(HTTP::Response->new(201, 'OK', HTTP::Headers->new(), $sLiveStatus . $sStatus));
                             }
                         }
@@ -2384,6 +2413,17 @@ sub clientStartup() {
             # request to startup in foreground when a daemon is already running in the background
             kill('TERM', $iDaemonPID);
             sleep(1);
+
+            if ($iDaemonPID = daemonAlreadyRunning()) {
+                print STDERR "previously running daemon ignoring SIGTERM; trying SIGKILL...\n";
+                kill('KILL', $iDaemonPID);
+                sleep(1);
+
+                if ($iDaemonPID = daemonAlreadyRunning()) {
+                    print STDERR "ERROR: can't kill running (pid=$iDaemonPID) daemon; reboot?\n";
+                    exit(1);
+                }
+            }
         }
 
         readValidConfigOrDie($g_sConfigFilename);
@@ -2396,6 +2436,7 @@ sub clientStartup() {
         else {
             $g_bTEST_RUN = 3 unless $g_bTEST_RUN;    # i.e. if already hardcoded to '1' then don't override that
             print "  *** RUNNING IN FOREGROUND ***\n";
+            $g_iDebugTopics = $g_iTestingDebugTopics; 
             daemonMain();
         }
         exit(0);

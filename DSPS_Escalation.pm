@@ -48,7 +48,7 @@ sub primeEscalation($$$) {
     return $bRoomChanged if (main::getRecoveryRegex() && $sMessage =~ main::getRecoveryRegex());
 
     # are there enough other people in the room to skip the escalation?
-    my $iOccupants = () = DSPS_Room::roomStatus($iRoom, 1, 1);
+    my $iOccupants = () = DSPS_Room::roomStatusIndividual($iRoom, 1, 1);
     if ($iOccupants >= $g_hEscalations{$sEscName}->{min_to_abort}) {
         debugLog(D_escalations, $g_hUsers{$iOncallPhone}->{name} . " is already in room $iRoom which has $iOccupants people" . " - aborting $sEscName escalation");
         return $bRoomChanged;
@@ -240,11 +240,9 @@ sub checkEscalationCancel($$) {
 
     if ($iRoom && ($g_hRooms{$iRoom}->{escalation_time} > time())) {
 
-        # we can cacnel an escalation for this room if a human replied
+        # we can cancel an escalation for this room if a human replied
         # or nagios sent a recovery message
-        if (DSPS_User::humanUsersPhone($iSender)
-            || (main::getRecoveryRegex() && $sMessage =~ main::getRecoveryRegex()))
-        {
+        if (DSPS_User::humanUsersPhone($iSender) || (main::getRecoveryRegex() && $sMessage =~ main::getRecoveryRegex())) {
             my $sEscName = $g_hRooms{$iRoom}->{escalation_name};
 
             $g_hRooms{$iRoom}->{escalation_time} = 0;
@@ -259,8 +257,9 @@ sub checkEscalationCancel($$) {
             }
             else {
                 debugLog(D_escalations, "escalation for room $iRoom canceled by recovery");
-                return 1;    # means we need to modify the message with a '-' prefix
             }
+
+            return 1;   # means we need to modify the message with a '-' prefix
         }
     }
 

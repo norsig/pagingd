@@ -11,8 +11,55 @@ use base 'Exporter';
 our @EXPORT = ('%g_hRooms');
 
 our %g_hRooms;
+our @g_aRecentRooms;
+
 my $iLastRoomErrorTime = 0;
 
+
+sub sendRecentRooms($) {
+    my $iSender = shift;
+    my $sResult = '';
+
+    if ($#g_aRecentRooms >= 0) {
+        foreach my $tR (reverse @g_aRecentRooms) {
+            my $sEntry = prettyDateTime($tR->{creation_time}, 1) . ": " . roomStatusIndividual(0, 0, 0, 0, $tR->{most_occupants_by_phone}) . "\n" . $tR->{summary};
+            $sResult .= $iSender ? main::sendSmsPage($iSender, $sEntry) : "$sEntry\n\n";
+        }
+    }
+    else {
+        $sResult .= $iSender ? main::sendSmsPage($iSender, t(S_NoRecent)) : S_NoRecent . "\n";
+    }
+
+    return $sResult;
+}
+
+
+sub catalogRecentRoom($) {
+    my $iRoom = shift;
+    my $iNow = time();
+
+    return unless $iRoom;
+
+    my @aRecentCopy = @g_aRecentRooms;
+    foreach my $tR (@aRecentCopy) {
+        if ($tR->{creation_time} < $iNow - 86400) {
+            shift @g_aRecentRooms;
+            debugLog(D_rooms, "pruned a room");
+        }
+        else {
+            last;
+        }
+    }
+
+    my $tRoom = {
+        creation_time => $g_hRooms{$iRoom}->{creation_time},
+        summary => $g_hRooms{$iRoom}->{summary},
+        most_occupants_by_phone => $g_hRooms{$iRoom}->{most_occupants_by_phone},
+    };
+
+    debugLog(D_rooms, "cataloged a recent room, ct=" . $g_hRooms{$iRoom}->{creation_time});
+    push(@g_aRecentRooms, $tRoom);
+}
 
 
 sub humanSort {
@@ -60,6 +107,7 @@ sub createRoom {
 
 sub destroyRoom($) {
     my $iRoomNumber = shift;
+    catalogRecentRoom($iRoomNumber);
     delete $g_hRooms{$iRoomNumber};
     debugLog(D_rooms, "cleaned up room #$iRoomNumber");
 }
@@ -210,20 +258,40 @@ sub roomHumanCount($) {
 
 
 
-sub roomStatus($;$$$) {
+sub roomStatus($;$$$$) {
     my $iTargetRoom        = shift;
     my $bNoGroupNames      = shift || 0;
     my $bSquashSystemUsers = shift || 0;
     my $bUseMostOccupants  = shift || 0;
+    my $rOccupantsByPhone  = shift || 0;
+    my $sFullResult        = '';
+
+    foreach my $iRoom (sort keys %g_hRooms) {
+        next if ($iTargetRoom && ($iRoom != $iTargetRoom));    # target == 0 means all rooms
+        next unless ($rOccupantsByPhone || validRoom($iRoom));
+
+        $sFullResult = cr($sFullResult) . (!$iTargetRoom ? "Room $iRoom: " : '') . roomStatusIndividual($iRoom, $bNoGroupNames, $bSquashSystemUsers, $bUseMostOccupants, $rOccupantsByPhone);
+    }
+
+    return $sFullResult ? $sFullResult : S_NoConversations;
+}
+
+
+sub roomStatusIndividual($;$$$$) {
+    my $iTargetRoom        = shift;
+    my $bNoGroupNames      = shift || 0;
+    my $bSquashSystemUsers = shift || 0;
+    my $bUseMostOccupants  = shift || 0;
+    my $rOccupantsByPhone  = shift || 0;
+    my %hOccupantsByPhone  = $rOccupantsByPhone ? %{$rOccupantsByPhone} : ();
     my $sFullResult        = '';
     my %hFullHash          = ();
 
-    foreach my $iRoom (keys %g_hRooms) {
-        next if ($iTargetRoom && ($iRoom != $iTargetRoom));    # target == 0 means all rooms
-        next unless validRoom($iRoom);
+    if ($rOccupantsByPhone || validRoom($iTargetRoom)) {
+        my $iRoom = $iTargetRoom;
 
         # our room stores a list of all occupants
-        my %hRoomOccupants = %{ ($bUseMostOccupants ? $g_hRooms{$iRoom}->{most_occupants_by_phone} : $g_hRooms{$iRoom}->{occupants_by_phone}) };
+        my %hRoomOccupants = $rOccupantsByPhone ? %hOccupantsByPhone : %{ ($bUseMostOccupants ? $g_hRooms{$iRoom}->{most_occupants_by_phone} : $g_hRooms{$iRoom}->{occupants_by_phone}) };
 
         # but the list of people can get pretty long if we try to print them all one by one
         # so lets substitute in group names if every person from a given group is in the room
@@ -266,7 +334,7 @@ sub roomStatus($;$$$) {
             }
         }
 
-        $sFullResult = cr($sFullResult) . ($iTargetRoom ? '' : "Room $iRoom: ") . join(', ', sort humanSort keys(%hRoomOccupants));
+        $sFullResult = cr($sFullResult) . join(', ', sort humanSort keys(%hRoomOccupants));
         @hFullHash{ keys %hRoomOccupants } = values %hRoomOccupants;
     }
 
@@ -346,39 +414,11 @@ sub roomsHealthCheck {
         if ($g_hRooms{$iRoomNumber}->{expiration_time} <= $iNow) {
             infoLog("room $iRoomNumber expired with " . keys(%{ $g_hRooms{$iRoomNumber}->{occupants_by_phone} }) . " occupants");
             logRoom($iRoomNumber);
+            catalogRecentRoom($iRoomNumber);
             delete $g_hRooms{$iRoomNumber};
         }
     }
 }
-
-
-
-sub timeLength($) {
-    my $iDiffSecs = shift;
-    my $sResult   = '';
-
-    if ($iDiffSecs >= 3600) {
-        my $iHours = int($iDiffSecs / 3600);
-        $sResult = "$iHours hour" . ($iHours > 1 ? 's' : '');
-        $iDiffSecs -= 3600 * $iHours;
-    }
-
-    if ($iDiffSecs >= 60) {
-        my $iMinutes = int($iDiffSecs / 60);
-        $sResult .= ($sResult ? ', ' : '') . "$iMinutes minute" . ($iMinutes > 1 ? 's' : '');
-        $iDiffSecs -= 60 * $iMinutes;
-    }
-
-    # only show seconds if there are no hours or minutes
-    if (!$sResult && $iDiffSecs) {
-        $sResult = "$iDiffSecs second" . ($iDiffSecs > 1 ? 's' : '');
-    }
-
-    $sResult = '0 minutes' unless $sResult;
-
-    return $sResult;
-}
-
 
 
 sub logRoom($) {
@@ -386,11 +426,11 @@ sub logRoom($) {
     my $sLogFile = main::getLogRoomsTo();
     use constant ONLY_LOG_SUMMARIZED => 1;
 
-    if ((defined $g_hRooms{$iRoom}) && $sLogFile) {
+    if ((defined $g_hRooms{$iRoom}) && $sLogFile && !$main::g_bTEST_RUN) {
         open(LOG, ">>$sLogFile") || return infoLog("Unable to write to $sLogFile");
 
         if (($g_hRooms{$iRoom}->{summary} && ($g_hRooms{$iRoom}->{summary} =~ /^(.*?)\s*;\s*(.*)$/)) || !ONLY_LOG_SUMMARIZED) {
-            print LOG localtime($g_hRooms{$iRoom}->{creation_time}) . " for " . timeLength(time() - $g_hRooms{$iRoom}->{creation_time}) . "\t";
+            print LOG localtime($g_hRooms{$iRoom}->{creation_time}) . " for " . prettyDuration(time() - $g_hRooms{$iRoom}->{creation_time}, 1) . "\t";
             print LOG roomStatus($iRoom, 0, 1, 1) . "\n";
 
             if ($g_hRooms{$iRoom}->{summary} && ($g_hRooms{$iRoom}->{summary} =~ /^(.*?)\s*;\s*(.*)$/)) {
