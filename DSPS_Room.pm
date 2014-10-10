@@ -23,11 +23,11 @@ sub sendRecentRooms($) {
     if ($#g_aRecentRooms >= 0) {
         foreach my $tR (reverse @g_aRecentRooms) {
             my $sEntry = prettyDateTime($tR->{creation_time}, 1) . ": " . roomStatusIndividual(0, 0, 0, 0, $tR->{most_occupants_by_phone}) . "\n" . $tR->{summary};
-            $sResult .= $iSender ? main::sendSmsPage($iSender, $sEntry) : "$sEntry\n\n";
+            $sResult .= $iSender ? main::sendSmsPage($iSender, $sEntry) : "$sEntry\n";
         }
     }
     else {
-        $sResult .= $iSender ? main::sendSmsPage($iSender, t(S_NoRecent)) : S_NoRecent . "\n";
+        $sResult = $iSender ? main::sendSmsPage($iSender, t(S_NoRecent)) : S_NoRecent . "\n";
     }
 
     return $sResult;

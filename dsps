@@ -906,8 +906,19 @@ sub handlePagingCommands($$) {
 
                 if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':vacation')) {
                     if ($iSeconds) {
-                        $g_hUsers{$iSender}->{vacation_end} = time() + $iSeconds;
-                        sendSmsPage($iSender, t("You have successfully set $sTimeText of vacation time."));
+                        if ($g_bTEST_RUN) {
+                            infoLog("Vacation time NOT actually set due to testing mode");
+                        }
+                        else {
+                            $g_hUsers{$iSender}->{vacation_end} = time() + $iSeconds;
+                        }
+                        my $sReplyText = "You have successfully set $sTimeText of vacation time.";
+                        if ($iSeconds < 86400) {
+                            my ($iValue) = ($sTimeText =~ /(\d+)\s/);
+                            my $sS = $iValue > 1 ? 's' : '';
+                            $sReplyText .= "\nIf you meant to set $iValue day$sS or week$sS use a unit suffix like ${iValue}d or ${iValue}w.";
+                        }
+                        sendSmsPage($iSender, t($sReplyText));
                         sendEmail(DSPS_Escalation::getUsersEscalationsEmails($iSender), $g_hConfigOptions{admin_email}, sv(E_VacationSet2, $g_hUsers{$iSender}->{name}, $sTimeText));
                         logPage($iSender, '', "set $sTimeText of vacation");
                     }
