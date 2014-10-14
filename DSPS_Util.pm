@@ -101,26 +101,13 @@ sub parseUserTime($;$) {
         my $iOrigValue = $1;
         my $iSeconds   = $1;
         my $sUnit      = $2;
-        my $sText      = '';
 
-        if ($sUnit eq 's') {$sText = 'second';}
-        if ($sUnit eq 'm') {$iSeconds *= 60;      $sText = 'minute';}
-        if ($sUnit eq 'w') {$iSeconds *= ONEWEEK; $sText = 'week';}
-        if (($sUnit eq 'h') || ($sUnit eq '')) {$iSeconds *= 3600; $sText = 'hour';}
-        if ($sUnit eq 'd') {
-            $iSeconds *= 86400;
-            $sText = 'day';
+        if ($sUnit eq 'm') {$iSeconds *= 60; }
+        if (($sUnit eq 'h') || ($sUnit eq '')) {$iSeconds *= 3600; }
+        if ($sUnit eq 'd') { $iSeconds *= 86400; }
+        if ($sUnit eq 'w') { $iSeconds *= ONEWEEK; }
 
-            # days to weeks
-            if (($iOrigValue > 6) && ($iOrigValue % 7 == 0)) {
-                $iOrigValue /= 7;
-                $sText    = 'week';
-                $iSeconds = ($iOrigValue * ONEWEEK);
-            }
-        }
-
-        return (0) unless $sText;
-        return ($iSeconds, "$iOrigValue $sText" . ($iOrigValue > 1 ? 's' : ''));
+        return ($iSeconds, prettyDuration($iSeconds, 1));
     }
 
     return 0;

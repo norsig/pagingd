@@ -73,7 +73,7 @@ sub primeEscalation($$$) {
     # it's a go - setup the escalation
     # the "minus 60 seconds" here is so we have time to resend the initial page to the on call person a second time (just to be nice) before
     # we actually esclate.  logic is in checkEscalationTimes().
-    # the -1 is to offset race conditions so we don't miss a full sleep/select cycle in th emain loop
+    # the -1 is to offset race conditions so we don't miss a full sleep/select cycle in the main loop
     $g_hRooms{$iRoom}->{escalation_time}        = time() + $g_hEscalations{$sEscName}->{timer} - 1 - ($g_hEscalations{$sEscName}->{timer} >= 60 ? 60 : 0);
     $g_hRooms{$iRoom}->{escalation_to}          = $g_hEscalations{$sEscName}->{escalate_to};
     $g_hRooms{$iRoom}->{escalation_orig_sender} = $sSender;
