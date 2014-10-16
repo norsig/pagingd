@@ -59,8 +59,10 @@ sub debugLog($$) {
 
 sub infoLog($) {
     my $sMessage = shift;
-    syslog(LOG_INFO, "$sMessage");
-    print STDERR (localtime(time) . " [infoLog] $sMessage\n") if $main::g_bTEST_RUN > 2;
+    unless ($main::g_bTEST_RUN > 9) {
+        syslog(LOG_INFO, "$sMessage");
+        print STDERR (localtime(time) . " [infoLog] $sMessage\n") if $main::g_bTEST_RUN > 2;
+    }
     return $sMessage . "\n";
 }
 

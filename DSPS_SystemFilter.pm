@@ -86,6 +86,7 @@ sub blockedByFilter($$) {
         $sGenericMessage =~ s/HTTP OK:.*\d+ by.*$//s;
         $sGenericMessage =~ s/([()])/\\$1/g;
 
+        debugLog(D_filters, "ack mode checking");
         foreach my $sPrevMsg (@{ $g_hRooms{$iRoom}->{history} }) {
             debugLog(D_filters, "ack check [$sPrevMsg] against [$sGenericMessage]");
             if ($sPrevMsg =~ /$sGenericMessage/) {
