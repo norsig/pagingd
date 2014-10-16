@@ -68,7 +68,7 @@ sub performRoomAndUserTests() {
     $main::g_hConfigOptions{nagios_problem_regex} = 'PROBLEM';
     $main::g_hConfigOptions{nagios_recovery_regex} = 'RECOVERY';
 
-    main::processPageEngine($sUserNagios, 'PROBLEM the sky is falling! @testerjoe') . "\n";
+    main::processPageEngine($sUserNagios, 'PROBLEM the sky is falling! @testerjoe'); 
     ok(main::processPageEngine($sUserNagios, 'PROBLEM the sky is falling! @testerjoe') eq 'Blocked by system filter (ackMode)', ":ack filter");
 }
 
