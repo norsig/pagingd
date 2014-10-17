@@ -1,6 +1,7 @@
 package DSPS_SystemFilter;
 
 use FreezeThaw qw(freeze thaw);
+use Time::Local;
 use DSPS_User;
 use DSPS_Room;
 use DSPS_Config;
@@ -15,6 +16,7 @@ our @EXPORT = ('getAllNagiosFilterTill', 'setAllNagiosFilterTill');
 our $iFilterRecoveryLoadTill = 0;
 our $iFilterAllNagiosTill    = 0;
 our %rFilterRegex;
+our %rFilterRegexProfile;
 
 
 
@@ -50,17 +52,13 @@ sub blockedByFilter($$) {
     my $iNow     = time();
 
     # check the recovery or system load filter
-    if (   ($iFilterRecoveryLoadTill > $iNow)
-        && ($sMessage =~ /(^[-+!]{0,1}RECOVERY)|(System Load)/))
-    {
+    if (($iFilterRecoveryLoadTill > $iNow) && ($sMessage =~ /(^[-+!]{0,1}RECOVERY)|(System Load)/)) {
         debugLog(D_filters, "message matched Recovery or Load filter");
         return "recovery/load";
     }
 
     # check the all nagios filter
-    if (   ($iFilterAllNagiosTill > $iNow)
-        && (($sMessage =~ /$g_hConfigOptions{nagios_problem_regex}/) || ($sMessage =~ /$g_hConfigOptions{nagios_recovery_regex}/)))
-    {
+    if (($iFilterAllNagiosTill > $iNow) && (($sMessage =~ /$g_hConfigOptions{nagios_problem_regex}/) || ($sMessage =~ /$g_hConfigOptions{nagios_recovery_regex}/))) {
         debugLog(D_filters, "message matched All Nagios filter");
         return "allNagios";
     }
@@ -69,14 +67,35 @@ sub blockedByFilter($$) {
     foreach my $iRegexFilterID (keys %rFilterRegex) {
         my $sThisRegex = $rFilterRegex{$iRegexFilterID}->{regex};
         $sThisRegex =~ s/(\\s| )/(\\s|)/g;
-        if (   ($rFilterRegex{$iRegexFilterID}->{till} >= $iNow)
-            && ($sMessage =~ /$sThisRegex/i))
-        {
+        if (($rFilterRegex{$iRegexFilterID}->{till} >= $iNow) && ($sMessage =~ /$sThisRegex/i)) {
             debugLog(D_filters, "message matched Regex filter (" . $rFilterRegex{$iRegexFilterID}->{regex} . ")");
             return "regex";
         }
 
         rmRegexFilter($rFilterRegex{$iRegexFilterID}->{regex}) if ($rFilterRegex{$iRegexFilterID}->{till} < $iNow);
+    }
+
+    # check all regex profiles
+    unless ($iRoom && $g_hRooms{$iRoom}->{maintenance}) {
+        foreach my $iRegexFilterID (keys %rFilterRegexProfile) {
+            my $sThisRegex = $rFilterRegexProfile{$iRegexFilterID}->{regex};
+            if ($sMessage =~ /$sThisRegex/i) {
+                my ($iFromHour, $iFromMin) = ($rFilterRegexProfile{$iRegexFilterID}->{from} =~ /(\d+):(\d+)/);
+                my ($iTillHour, $iTillMin) = ($rFilterRegexProfile{$iRegexFilterID}->{till} =~ /(\d+):(\d+)/);
+                my $iFrom = $iFromHour * 3600 + $iFromMin * 60;
+                my $iTill = $iTillHour * 3600 + $iTillMin * 60;
+                my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime($iNow);
+                my $iMidnight = timelocal(0, 0, 0, $mday, $mon, $year);
+                my $iNowToday = $iNow - $iMidnight;
+
+                debugLog(D_filters, "checking regex profile (/$sThisRegex/); now=$iNowToday, window=$iFrom-$iTill");
+                if (($iFrom < $iTill && $iNowToday >= $iFrom && $iNowToday <= $iTill) ||
+                    ($iFrom > $iTill && ($iNowToday >= $iFrom || $iNowToday <= $iTill))) {
+                    debugLog(D_filters, "message matched regex profile (/$sThisRegex/)");
+                    return "profile:" . $rFilterRegexProfile{$iRegexFilterID}->{title};
+                }
+            }
+        }
     }
 
     # check for a previously seen message in a room with ack-mode enabled
@@ -151,5 +170,32 @@ sub rmRegexFilter($) {
 
     return 0;
 }
+
+
+sub newRegexProfile($$$$) {
+    my ($sTitle, $sRegex, $sFrom, $sTill) = @_;
+    my $iLastID = 1;
+
+    foreach my $iRegexProfileID (sort keys %rFilterRegexProfile) {
+        $iLastID = $iRegexProfileID;
+        last if ($sRegex eq $rFilterRegexProfile{$iRegexProfileID}->{regex});
+        $iLastID++;
+    }
+
+    debugLog(D_filters, (defined $rFilterRegexProfile{$iLastID} ? 'updated' : 'added') . " regex profile /$sRegex/ from $sFrom to $sTill ($sTitle)");
+    $rFilterRegexProfile{$iLastID} = { title => $sTitle, regex => $sRegex, from => $sFrom, till => $sTill };
+}
+
+
+sub profileStatus() {
+    my $sResult = '';
+
+    foreach my $iRegexProfileID (sort keys %rFilterRegexProfile) {
+        $sResult = cr($sResult) . ' ' . $rFilterRegexProfile{$iRegexProfileID}->{title} . ": /" . $rFilterRegexProfile{$iRegexProfileID}->{regex} . "/ (" . $rFilterRegexProfile{$iRegexProfileID}->{from} . ' to ' . $rFilterRegexProfile{$iRegexProfileID}->{till} . ")";
+    }
+
+    return $sResult ? "Regex Profiles:\n$sResult" : '';
+}
+
 
 1;

@@ -2102,8 +2102,10 @@ sub daemonMain() {
                             # status request from the client CLI
                             elsif ($oRequest->uri->path eq '/status') {
                                 my $sTriggers = DSPS_Trigger::triggerStatus();
+                                my $sProfiles = DSPS_SystemFilter::profileStatus();
                                 my $sStatus = "CURRENT ROOM OCCUPANTS\n" . DSPS_Room::roomStatus(0) . "\n\n";
-                                $sStatus .= "RECENT ROOMS\n" . DSPS_Room::sendRecentRooms(0) . "\n" .  filterStatus(0) . ($sTriggers ? "\n$sTriggers" : '');
+                                $sStatus .= "RECENT ROOMS\n" . DSPS_Room::sendRecentRooms(0) . "\n" .  filterStatus(0) . ($sTriggers ? "\n$sTriggers\n" : '');
+                                $sStatus .= ($sProfiles ? "\n$sProfiles\n" : '');
                                 $oConnection->send_response(HTTP::Response->new(201, 'OK', HTTP::Headers->new(), $sLiveStatus . $sStatus));
                             }
                         }

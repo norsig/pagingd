@@ -570,6 +570,16 @@ sub readConfig(;$) {
             }
         }
 
+        # regex profile line
+        if (/\b(?:profile|regex_profile)\s*:\s*["']*([^,;]+?)["']*\s*[,;]\s*\/([^\/]+)\/\s*[,;]\s*(\d{1,2}:\d{2})\s*[,;]\s*(\d{1,2}:\d{2})/i) {
+            my $sTitle = $1;
+            my $sRegex = $2;
+            my $sFrom = $3;
+            my $sTill = $4;
+            DSPS_SystemFilter::newRegexProfile($sTitle, $sRegex, $sFrom, $sTill);
+            next;
+        }
+
         print infoLog("configuration error - unknown directive: $_ $sLineNum");
         ++$iErrors;
     }
