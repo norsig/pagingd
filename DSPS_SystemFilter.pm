@@ -66,7 +66,7 @@ sub blockedByFilter($$) {
     # check all regex filters
     foreach my $iRegexFilterID (keys %rFilterRegex) {
         my $sThisRegex = $rFilterRegex{$iRegexFilterID}->{regex};
-        $sThisRegex =~ s/(\\s| )/(\\s|)/g;
+        $sThisRegex =~ s/(\\s| )/(\\s|)/g;  # to match randomly inserted newlines by the gateway provider
         if (($rFilterRegex{$iRegexFilterID}->{till} >= $iNow) && ($sMessage =~ /$sThisRegex/i)) {
             debugLog(D_filters, "message matched Regex filter (" . $rFilterRegex{$iRegexFilterID}->{regex} . ")");
             return "regex";
@@ -79,6 +79,7 @@ sub blockedByFilter($$) {
     unless ($iRoom && $g_hRooms{$iRoom}->{maintenance}) {
         foreach my $iRegexFilterID (keys %rFilterRegexProfile) {
             my $sThisRegex = $rFilterRegexProfile{$iRegexFilterID}->{regex};
+            $sThisRegex =~ s/(\\s| )/(\\s|)/g;  # to match randomly inserted newlines by the gateway provider
             if ($sMessage =~ /$sThisRegex/i) {
                 my ($iFromHour, $iFromMin) = ($rFilterRegexProfile{$iRegexFilterID}->{from} =~ /(\d+):(\d+)/);
                 my ($iTillHour, $iTillMin) = ($rFilterRegexProfile{$iRegexFilterID}->{till} =~ /(\d+):(\d+)/);
@@ -182,7 +183,7 @@ sub newRegexProfile($$$$) {
         $iLastID++;
     }
 
-    debugLog(D_filters, (defined $rFilterRegexProfile{$iLastID} ? 'updated' : 'added') . " regex profile /$sRegex/ from $sFrom to $sTill ($sTitle)");
+    debugLog(D_configRead, (defined $rFilterRegexProfile{$iLastID} ? 'updated' : 'added') . " regex profile /$sRegex/ from $sFrom to $sTill ($sTitle)");
     $rFilterRegexProfile{$iLastID} = { title => $sTitle, regex => $sRegex, from => $sFrom, till => $sTill };
 }
 
@@ -191,7 +192,7 @@ sub profileStatus() {
     my $sResult = '';
 
     foreach my $iRegexProfileID (sort keys %rFilterRegexProfile) {
-        $sResult = cr($sResult) . ' ' . $rFilterRegexProfile{$iRegexProfileID}->{title} . ": /" . $rFilterRegexProfile{$iRegexProfileID}->{regex} . "/ (" . $rFilterRegexProfile{$iRegexProfileID}->{from} . ' to ' . $rFilterRegexProfile{$iRegexProfileID}->{till} . ")";
+        $sResult = cr($sResult) . "  [" . $rFilterRegexProfile{$iRegexProfileID}->{from} . ' to ' . $rFilterRegexProfile{$iRegexProfileID}->{till} . "] " . $rFilterRegexProfile{$iRegexProfileID}->{title} . ", /" . $rFilterRegexProfile{$iRegexProfileID}->{regex} . "/";
     }
 
     return $sResult ? "Regex Profiles:\n$sResult" : '';

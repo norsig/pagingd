@@ -570,8 +570,7 @@ sub filterStatus($) {
     my $sRegex = '';
     foreach my $iRegexID (sort keys %DSPS_SystemFilter::rFilterRegex) {
         if ($DSPS_SystemFilter::rFilterRegex{$iRegexID}->{till} > $iNow) {
-            $sRegex .=
-              ' /' . $DSPS_SystemFilter::rFilterRegex{$iRegexID}->{regex} . "/" . ($iSender ? '' : ' (' . prettyDateTime($DSPS_SystemFilter::rFilterRegex{$iRegexID}->{till}) . ')') . "\n";
+            $sRegex .= ' ' . ($iSender ? '' : ' [' . prettyDateTime($DSPS_SystemFilter::rFilterRegex{$iRegexID}->{till}) . '] ') . '/' . $DSPS_SystemFilter::rFilterRegex{$iRegexID}->{regex} . "/\n";
         }
     }
 

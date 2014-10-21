@@ -431,7 +431,7 @@ sub logRoom($) {
         open(LOG, ">>$sLogFile") || return infoLog("Unable to write to $sLogFile");
 
         if (($g_hRooms{$iRoom}->{summary} && ($g_hRooms{$iRoom}->{summary} =~ /^(.*?)\s*;\s*(.*)$/)) || !ONLY_LOG_SUMMARIZED) {
-            print LOG localtime($g_hRooms{$iRoom}->{creation_time}) . " for " . prettyDuration(time() - $g_hRooms{$iRoom}->{creation_time}, 1) . "\t";
+            print LOG localtime($g_hRooms{$iRoom}->{creation_time}) . " for " . prettyDuration(time() - $g_hRooms{$iRoom}->{creation_time}, 1) . "\nAudience: ";
             print LOG roomStatus($iRoom, 0, 1, 1) . "\n";
 
             if ($g_hRooms{$iRoom}->{summary} && ($g_hRooms{$iRoom}->{summary} =~ /^(.*?)\s*;\s*(.*)$/)) {
