@@ -43,6 +43,7 @@ use Cwd 'abs_path';
 use POSIX qw(strftime);
 use MIME::QuotedPrint::Perl;
 use LWP 5.64;
+use Time::HiRes;
 use lib "/usr/local/bin/dsps3";
 use DSPS_User;
 use DSPS_Room;
@@ -462,6 +463,7 @@ sub helpSearch($) {
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub sendSmsPage($$) {
     my ($iCellNumber, $sMessage) = @_;
+    use constant LAST_GW_ERROR_FILE => '/tmp/.dsps.last_gw_error';
 
     # trim to 160 characters
     $sMessage = substr($sMessage, 0, 160) if length($sMessage) > 160;
@@ -532,23 +534,56 @@ sub sendSmsPage($$) {
     # send the page (perform POST)
     my $tBrowser = LWP::UserAgent->new;
     $tBrowser->timeout(10);
-    my $tResponse = $tBrowser->post($g_hConfigOptions{gateway_url}, \%hGatewayParams);
 
-    debugLog(D_pageEngine, "PAGE " . $g_hUsers{$iCellNumber}->{name} . " ($iCellNumber) [" . $tResponse->code() . "]: $sMessage");
+    my $iTry = 0;
+    while ($iTry++ < 2) {
+        my $iStartTime = Time::HiRes::time();
+        my $tResponse = $tBrowser->post($g_hConfigOptions{gateway_url}, \%hGatewayParams);
+        my $iElapsed = sprintf("%.2f", Time::HiRes::time() - $iStartTime);
+        debugLog(D_pageEngine, "PAGE " . $g_hUsers{$iCellNumber}->{name} . " ($iCellNumber) [" . $tResponse->code() . ($tResponse->code() == 200 ? '' : ".t$iTry") . " in $iElapsed]: $sMessage");
+ 
+        last if ($tResponse->is_success);
 
-    unless ($tResponse->is_success) {
-        if (defined($g_hConfigOptions{fallback_email}) && open(MAIL, "| /usr/sbin/sendmail " . $g_hConfigOptions{fallback_email})) {
-            print MAIL "DSPS can't send via gateway provider!\n\n";
-            print MAIL "To: $iCellNumber\n";
-            print MAIL "$sMessage\n";
-            close(MAIL);
+        if (open(ERROR_LOG, ">>/tmp/dsps.gateway.error")) {
+            print ERROR_LOG localtime(time()) . " : to $iCellNumber received " . $tResponse->code() . "on try $iTry in $iElapsed seconds\n";
+            print ERROR_LOG $tResponse->content() . "\n-------------------------------------------------------\n\n";
+            close(ERROR_LOG);
+        }
+    
+        my $iWaitDuration = 300;
+        my $iLastMTime = 0;
 
-            if (open(ERROR_LOG, ">>/tmp/dsps.gateway.error")) {
-                print ERROR_LOG localtime(time()) . " : to $iCellNumber received " . $tResponse->code() . "\n";
-                print ERROR_LOG $tResponse->content() . "\n-------------------------------------------------------\n\n";
-                close(ERROR_LOG);
+        # if there's an error state file we use its mtime as the time of the last error
+        # and its contents as the last amount of time we waited between errors
+        if (-f LAST_GW_ERROR_FILE) {
+            $iLastMTime = (stat(LAST_GW_ERROR_FILE))[9];
+            if (open(GWEF, LAST_GW_ERROR_FILE)) {
+                $iWaitDuration = <GWEF>;
+                close(GWEF);
             }
         }
+
+        # has it been long enough since we last emailed about this error?
+        my $iNow = time();
+        if ($iLastMTime < $iNow - $iWaitDuration) {
+            if (defined($g_hConfigOptions{fallback_email}) && open(MAIL, "| /usr/sbin/sendmail " . $g_hConfigOptions{fallback_email})) {
+                print MAIL "DSPS can't send via gateway provider!\n\n";
+                print MAIL "To: $iCellNumber\n";
+                print MAIL "$sMessage\n";
+                close(MAIL);
+            }
+
+            # has it been so long that we want to reset out duration counter back to 300?
+            $iWaitDuration = ($iNow - $iLastMTime > 86400) ? 300 : $iWaitDuration * 2;
+
+            # update the error state file
+            if (open(GWEF, '>' . LAST_GW_ERROR_FILE)) {
+                print GWEF $iWaitDuration;
+                close(GWEF);
+            }
+        }
+
+        sleep(1);
     }
 
     exit(0);    # child
