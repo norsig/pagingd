@@ -16,6 +16,21 @@ our @g_aRecentRooms;
 my $iLastRoomErrorTime = 0;
 
 
+sub roomType($) {
+    my $iRoom = shift;
+    return '' unless ($iRoom && defined($g_hRooms{$iRoom}));
+
+    my $sRoomType =
+        ($g_hRooms{$iRoom}->{broadcast_speaker} ? 'B' : '')
+        . ($g_hRooms{$iRoom}->{maintenance}       ? 'M' : '')
+        . ($g_hRooms{$iRoom}->{ack_mode}          ? 'A' : '')
+        . ($g_hRooms{$iRoom}->{ticket_number}     ? 'T' : '')
+        . ($g_hRooms{$iRoom}->{escalation_time}   ? 'E' : '');
+
+    return $sRoomType ? "[$sRoomType]" : '';
+}
+
+
 sub sendRecentRooms($) {
     my $iSender = shift;
     my $sResult = '';
@@ -126,7 +141,7 @@ sub cloneRoomMinusOccupants($) {
     $g_hRooms{$iNewRoom}->{ack_mode}                = $g_hRooms{$iOrigRoom}->{ack_mode};
     $g_hRooms{$iNewRoom}->{last_problem_time}       = $g_hRooms{$iOrigRoom}->{last_problem_time};
     $g_hRooms{$iNewRoom}->{last_human_reply_time}   = $g_hRooms{$iOrigRoom}->{last_human_reply_time};
-    $g_hRooms{$iNewRoom}->{creation_time}           = $g_hRooms{$iOrigRoom}->{creation_time};
+    $g_hRooms{$iNewRoom}->{creation_time}           = time();
     $g_hRooms{$iNewRoom}->{last_nonhuman_message}   = $g_hRooms{$iOrigRoom}->{last_nonhuman_message};
     $g_hRooms{$iNewRoom}->{summary}                 = $g_hRooms{$iOrigRoom}->{summary};
     $g_hRooms{$iNewRoom}->{sum_reminder_sent}       = $g_hRooms{$iOrigRoom}->{sum_reminder_sent};
@@ -259,19 +274,21 @@ sub roomHumanCount($) {
 
 
 
-sub roomStatus($;$$$$) {
+sub roomStatus($;$$$$$) {
     my $iTargetRoom        = shift;
     my $bNoGroupNames      = shift || 0;
     my $bSquashSystemUsers = shift || 0;
     my $bUseMostOccupants  = shift || 0;
     my $rOccupantsByPhone  = shift || 0;
+    my $bIncludeType       = shift || 0;
     my $sFullResult        = '';
 
     foreach my $iRoom (sort keys %g_hRooms) {
         next if ($iTargetRoom && ($iRoom != $iTargetRoom));    # target == 0 means all rooms
         next unless ($rOccupantsByPhone || validRoom($iRoom));
 
-        $sFullResult = cr($sFullResult) . (!$iTargetRoom ? "Room $iRoom: " : '') . roomStatusIndividual($iRoom, $bNoGroupNames, $bSquashSystemUsers, $bUseMostOccupants, $rOccupantsByPhone);
+        my $sType = $bIncludeType ? ' ' . roomType($iRoom) : '';
+        $sFullResult = cr($sFullResult) . ($iTargetRoom ? '' : "R$iRoom") . $sType . ($iTargetRoom ? '' : ': ') . roomStatusIndividual($iRoom, $bNoGroupNames, $bSquashSystemUsers, $bUseMostOccupants, $rOccupantsByPhone);
     }
 
     return $sFullResult ? $sFullResult : S_NoConversations;
@@ -291,19 +308,32 @@ sub roomStatusIndividual($;$$$$) {
     if ($rOccupantsByPhone || validRoom($iTargetRoom)) {
         my $iRoom = $iTargetRoom;
 
-        # our room stores a list of all occupants
+        # depending on how we're called we may need to calculate room status for one of three different hashes:
+        #  * a room's current occupants (part of the room struct)
+        #  * a room's most occupants (part of a the room struct)
+        #  * $rOccupantsbyPhone - a reference to an arbitrary hash that's passed in
         my %hRoomOccupants = $rOccupantsByPhone ? %hOccupantsByPhone : %{ ($bUseMostOccupants ? $g_hRooms{$iRoom}->{most_occupants_by_phone} : $g_hRooms{$iRoom}->{occupants_by_phone}) };
 
-        # but the list of people can get pretty long if we try to print them all one by one
-        # so lets substitute in group names if every person from a given group is in the room
-        # $hGroupMembers is our temporary tracking hash
+        # the list of people can get pretty long if we try to print them all one by one (let's call that option A).
+        # if requested (via parameters) we can look to see how many members of a group are present in the room.
+        # if every member of a group is present, we can remove the individual names and replace them by the group name.
+        # let's call that option B.
         unless ($bNoGroupNames) {
+
+            # loop through each defined group in the config file
             foreach my $sGroup (DSPS_User::allGroups()) {
                 my %hOrigRoomOccupants = %hRoomOccupants;
                 my %hGroupMembers;
-                $hGroupMembers{$_}++ for (DSPS_User::usersInGroup($sGroup));
 
-                # remove each group member from the room if present
+                # %hGroupMembers is a temporary hash for this loop
+                # let's start by entering all group members from the current group into this hash
+                $hGroupMembers{$_}++ for (DSPS_User::usersInGroup($sGroup));
+                my $iTotalInGroup = keys(%hGroupMembers);
+
+                # now we loop through people that are part of the current group.  for each group member
+                # that's present in the room we
+                #   * remove them from the room (%hRoomOccupants)
+                #   * remove them from the temporary %hGroupMembers hash
                 foreach my $sPersonInGroup (keys %hGroupMembers) {
                     if (defined $hRoomOccupants{$sPersonInGroup}) {
                         delete $hRoomOccupants{$sPersonInGroup};
@@ -311,22 +341,70 @@ sub roomStatusIndividual($;$$$$) {
                     }
                 }
 
-                if (keys(%hGroupMembers)) {
+                # at this point:
+                # hRoomOccupants = people in the room minus members of the current group (also minus previously handled groups from previous loops)
+                # hGroupMembers = members of the current group that are NOT in the room
+                my $iGroupMemsNOTinRoom = keys(%hGroupMembers);
 
-                    # if anyone is left in our temp hash then not everyone from the group was in the
-                    # room.  so we have to revert to our original copy and not remove anyone from this group
-                    %hRoomOccupants = %hOrigRoomOccupants;
+                # if there are any group members left in the room then we know the entire group isn't in the room.
+                # so we can't remove all their names and replace them with the group name.  notice we've been removing
+                # them from the room one by one in the above loop.  so if the below if() is true (again, meaning not
+                # the entire group is present) then we need to add them back.
+                if ($iGroupMemsNOTinRoom) {
+                    my $iGroupMemsInRoom = $iTotalInGroup - $iGroupMemsNOTinRoom;
+
+                    # here we know we need to add them back to the room.  but let's consider another possibility for how to simplify
+                    # lengthy output.  we know we can't just use the group name because not everyone is in the room (option B).  so either we
+                    # can list each person individually (option A) -- that's good if only a few people from the group are present.  or we
+                    # can say "groupFoo minus personA, personB" kind of thing (option C).  is our output more concise with A or C?  obviously
+                    # this depends on how many people are in the group and what percentage of them are in the room versus not.  let's pretend
+                    # all names (including the group name itself) are the same length, and we'll say the word "minus" counts as a name too.
+                    # then the question of option A vs C comes down to:
+                    if ($iGroupMemsInRoom > $iGroupMemsNOTinRoom + 2) {                 # only valid for groups of 5 or more
+
+                        # here we've decided to do option C:  groupFoo (minus personA)
+                        # we use the parens to distinguish between:
+                        # groupA minus personJ, personF, personG, groupB
+                        # without parents you might not know if personF is part of groupA and being subtracted from it or is a standalone
+                        # individual that's in addition to "groupA minus personJ."  so:
+                        # groupA (minus personJ, personF), personG, groupB
+                        # is much clearer.
+
+                        # at this point %hGroupMembers is a hash of everyone that's in the currently being processed group but is NOT
+                        # present in the room.  we're going to prep these people for the "minus" part of our status
+
+                        # convert phone numbers to names
+                        foreach my $iPhone (keys %hGroupMembers) {
+                            if (defined $g_hUsers{$iPhone}) {
+                                delete $hGroupMembers{$iPhone};
+                                $hGroupMembers{ $g_hUsers{$iPhone}->{name} } = 1 if (DSPS_User::humanUsersPhone($iPhone) || (!$bSquashSystemUsers && main::getShowNonHuman()));
+                            }
+                        }
+
+                        # all the group's individuals have been removed from the room (far above).  now we just need to
+                        # add back a single entry of "groupNAME (minus missingPeople)" - we make it a single entry
+                        # so that the final sort at the bottom keeps these pieces together as a single string
+                        $hRoomOccupants{$sGroup . " (minus " . join(', ', sort humanSort keys(%hGroupMembers)) . ")"} = 1;
+                    }
+                    else {
+                        # here we're at the straight, unsimplified version of option A - just list all the names.
+                        # at this point all of our simplifications have failed and we're reverting to the original
+                        # list of occupants that were passed into us.  the currently being processed group name can't
+                        # be used to simplify.
+                        %hRoomOccupants = %hOrigRoomOccupants;
+                    }
                 }
                 else {
-                    # or we've removed all the members of this group because they were all there
-                    # in which case let's replace them with the group name itself
+                    # option B - all members of the currently being processed group are present in the room and their
+                    # names have been removed one by one as we were checking them.  now we just have to add back the
+                    # group name in their place.
                     $hRoomOccupants{$sGroup} = 1 if (DSPS_User::humanTest($sGroup)
                         || (!$bSquashSystemUsers && main::getShowNonHuman()));    # human-based group actually
                 }
             }
         }
 
-        # convert phone numbers to names
+        # convert remaining phone numbers to names
         foreach my $iPhone (keys %hRoomOccupants) {
             if (defined $g_hUsers{$iPhone}) {
                 delete $hRoomOccupants{$iPhone};
@@ -335,7 +413,10 @@ sub roomStatusIndividual($;$$$$) {
             }
         }
 
+        # construct a string of all the completed hash entries
         $sFullResult = cr($sFullResult) . join(', ', sort humanSort keys(%hRoomOccupants));
+
+        # construct a hash in case that's requested
         @hFullHash{ keys %hRoomOccupants } = values %hRoomOccupants;
     }
 

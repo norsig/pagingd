@@ -30,6 +30,8 @@ sub performRoomAndUserTests() {
     my $sUserJim = '1234567890';
     my $sUserJoe = '1234567891';
     my $sUserNagios = '1234567892';
+    my $sUser4 = '1234567893';
+    my $sUser5 = '1234567894';
 
     $a = DSPS_Room::createRoom();
     ok($a && defined($g_hRooms{$a}) && $g_hRooms{$a}->{expiration_time} > time(), 'DSPS_Room::createRoom()');
@@ -49,6 +51,8 @@ sub performRoomAndUserTests() {
     ok(keys(%g_hUsers) == 2, 'DSPS_User::createUser() count');
 
     DSPS_User::createUser('!Nagios', 'nagios', $sUserNagios, 'ops', 100);
+    DSPS_User::createUser('user4', 'user4', $sUser4, 'ops', 100);
+    DSPS_User::createUser('user5', 'user5', $sUser5, 'ops', 100);
 
     main::processMentions($sUserJim, 'hey @testerjoe', '');
     ok(keys(%g_hRooms) == 1 && keys(%{$g_hRooms{1}->{occupants_by_phone}}) == 2, "call user into room");
@@ -70,13 +74,17 @@ sub performRoomAndUserTests() {
 
     main::processPageEngine($sUserNagios, 'PROBLEM the sky is falling! @testerjoe'); 
     ok(main::processPageEngine($sUserNagios, 'PROBLEM the sky is falling! @testerjoe') eq 'Blocked by system filter (ackMode)', ":ack filter");
+
+    main::processPageEngine($sUserJim, '@testerjoe, @user4');
+    my $bSuccess = 1 if (DSPS_Room::roomStatus(2, 0, 0, 0, 0, 0) =~ /minus/);
+    ok($bSuccess, "DSPS_Room::roomStatus() minus group member");
 }
 
 
 sub startTests(;$) {
     my $bDebug = shift || 0;
     require Test::More;
-    import Test::More tests => 16;
+    import Test::More tests => 17;
 
     if ($bDebug) {
         $main::g_bTEST_RUN = 5;

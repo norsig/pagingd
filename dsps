@@ -643,7 +643,7 @@ sub handlePagingCommands($$) {
         if ($sCommand =~ /^\?room/) {
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, '?rooms')) {
                 my $iUsersRoom = DSPS_Room::findUsersRoom($iSender);
-                my $sStatus = DSPS_Room::roomStatus((($sCommand eq '?room') && $iUsersRoom) ? $iUsersRoom : 0);
+                my $sStatus = DSPS_Room::roomStatus((($sCommand eq '?room') && $iUsersRoom) ? $iUsersRoom : 0, 0, 0, 0, 0, 1);
                 sendSmsPage($iSender, t($sStatus));
                 logPage($iSender, '', "received room status: $sStatus");
             }
@@ -1655,13 +1655,7 @@ sub logPage($$;$$) {
     $sMinusPeople = $sMinusPeople ? " - $sMinusPeople" : '';
 
     if ($iRoom) {
-        my $sRoomType =
-            ($g_hRooms{$iRoom}->{broadcast_speaker} ? 'B' : '')
-          . ($g_hRooms{$iRoom}->{maintenance}       ? 'M' : '')
-          . ($g_hRooms{$iRoom}->{ack_mode}          ? 'A' : '')
-          . ($g_hRooms{$iRoom}->{ticket_number}     ? 'T' : '')
-          . ($g_hRooms{$iRoom}->{escalation_time}   ? 'E' : '');
-        $sRoomType = $sRoomType ? "[$sRoomType] " : '';
+        my $sRoomType = DSPS_Room::roomType($iRoom) . ' ';
 
         if ($g_hRooms{$iRoom}->{broadcast_speaker}) {
             if ($iSenderPhone eq $g_hRooms{$iRoom}->{broadcast_speaker}) {
@@ -2137,7 +2131,7 @@ sub daemonMain() {
                             elsif ($oRequest->uri->path eq '/status') {
                                 my $sTriggers = DSPS_Trigger::triggerStatus();
                                 my $sProfiles = DSPS_SystemFilter::profileStatus();
-                                my $sStatus = "CURRENT ROOM OCCUPANTS\n" . DSPS_Room::roomStatus(0) . "\n\n";
+                                my $sStatus = "CURRENT ROOM OCCUPANTS\n" . DSPS_Room::roomStatus(0, 0, 0, 0, 0, 1) . "\n\n";
                                 $sStatus .= "RECENT ROOMS\n" . DSPS_Room::sendRecentRooms(0) . "\n" .  filterStatus(0) . ($sTriggers ? "\n$sTriggers\n" : '');
                                 $sStatus .= ($sProfiles ? "\n$sProfiles\n" : '');
                                 $oConnection->send_response(HTTP::Response->new(201, 'OK', HTTP::Headers->new(), $sLiveStatus . $sStatus));
