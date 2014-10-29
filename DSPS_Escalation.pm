@@ -238,7 +238,7 @@ sub checkEscalationCancel($$) {
     my ($iSender, $sMessage) = @_;
     my $iRoom = DSPS_Room::findUsersRoom($iSender);
 
-    if ($iRoom && ($g_hRooms{$iRoom}->{escalation_time} > time())) {
+    if ($iRoom && $g_hRooms{$iRoom}->{escalation_time}) {
 
         # we can cancel an escalation for this room if a human replied
         # or nagios sent a recovery message

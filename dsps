@@ -1655,7 +1655,8 @@ sub logPage($$;$$) {
     $sMinusPeople = $sMinusPeople ? " - $sMinusPeople" : '';
 
     if ($iRoom) {
-        my $sRoomType = DSPS_Room::roomType($iRoom) . ' ';
+        my $sRoomType = DSPS_Room::roomType($iRoom);
+        $sRoomType = $sRoomType ? $sRoomType . ' ' : '';
 
         if ($g_hRooms{$iRoom}->{broadcast_speaker}) {
             if ($iSenderPhone eq $g_hRooms{$iRoom}->{broadcast_speaker}) {
