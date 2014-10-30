@@ -287,7 +287,9 @@ sub roomStatus($;$$$$$) {
         next if ($iTargetRoom && ($iRoom != $iTargetRoom));    # target == 0 means all rooms
         next unless ($rOccupantsByPhone || validRoom($iRoom));
 
-        my $sType = $bIncludeType ? ' ' . roomType($iRoom) : '';
+        my $sType = $bIncludeType ? roomType($iRoom) : '';
+        $sType = $sType ? " $sType" : '';
+
         $sFullResult = cr($sFullResult) . ($iTargetRoom ? '' : "R$iRoom") . $sType . ($iTargetRoom ? '' : ': ') . roomStatusIndividual($iRoom, $bNoGroupNames, $bSquashSystemUsers, $bUseMostOccupants, $rOccupantsByPhone);
     }
 
