@@ -44,19 +44,18 @@ sub createUser {
 sub previouslySentTo($$) {
     my $iSender  = shift;
     my $sMessage = shift;
-    my $iNow     = time();
 
     if (defined $hDedupeByMessage{$sMessage}) {
         if ($hDedupeByMessage{$sMessage} =~ /\b$iSender:(\d+)\b/) {
             my $iTime = $1;
-            return 1 if ($iTime > $iNow - 172800);
+            return 1 if ($iTime > $main::g_iLastWakeTime - 172800);
 
-            $hDedupeByMessage{$sMessage} =~ s/$iSender:$iTime/$iSender:$iNow/;
+            $hDedupeByMessage{$sMessage} =~ s/$iSender:$iTime/$iSender:$main::g_iLastWakeTime/;
             return 0;
         }
     }
 
-    $hDedupeByMessage{$sMessage} = ($hDedupeByMessage{$sMessage} ? $hDedupeByMessage{$sMessage} : '') . " $iSender:" . $iNow;
+    $hDedupeByMessage{$sMessage} = ($hDedupeByMessage{$sMessage} ? $hDedupeByMessage{$sMessage} : '') . " $iSender:" . $main::g_iLastWakeTime;
     return 0;
 }
 
@@ -66,7 +65,7 @@ sub getAutoReply($) {
     my $iUser = shift;
 
     if ($g_hUsers{$iUser}->{auto_reply_text} && $g_hUsers{$iUser}->{auto_reply_expire}) {
-        if ($g_hUsers{$iUser}->{auto_reply_expire} > time()) {
+        if ($g_hUsers{$iUser}->{auto_reply_expire} > $main::g_iLastWakeTime) {
             return $g_hUsers{$iUser}->{auto_reply_text};
         }
         else {
@@ -206,11 +205,9 @@ sub humanUsersPhone($) {
 
 
 sub usersHealthCheck() {
-    my $iNow = time();
-
     # check for expired vacation time
     foreach my $iUser (keys %g_hUsers) {
-        if ($g_hUsers{$iUser}->{vacation_end} && ($g_hUsers{$iUser}->{vacation_end} <= $iNow)) {
+        if ($g_hUsers{$iUser}->{vacation_end} && ($g_hUsers{$iUser}->{vacation_end} <= $main::g_iLastWakeTime)) {
             $g_hUsers{$iUser}->{vacation_end} = 0;
             debugLog(D_users, $g_hUsers{$iUser}->{name} . "'s vacation time has expired");
             main::sendEmail(main::getUsersEscalationsEmails($iUser), main::getAdminEmail(), sv(E_VacationElapsed1, $g_hUsers{$iUser}->{name}));
@@ -226,8 +223,8 @@ sub usersHealthCheck() {
     # a random char to the end of the message to make it unique (done in
     # previouslySentTo().  otherwise the text gateway company drops what it
     # thinks is a dupe message to the phone.
-    if ($iLastDedupeMaintTime < $iNow - 21600) {
-        $iLastDedupeMaintTime = $iNow;
+    if ($iLastDedupeMaintTime < $main::g_iLastWakeTime - 21600) {
+        $iLastDedupeMaintTime = $main::g_iLastWakeTime;
 
         my $iBeforeCount = keys %hDedupeByMessage;
         foreach my $sMessage (keys %hDedupeByMessage) {
@@ -239,7 +236,7 @@ sub usersHealthCheck() {
                 if ($sDataPair =~ /\b(\d+):(\d+)\b/) {
                     my $iPhone = $1;
                     my $iTime  = $2;
-                    $sData =~ s/$iPhone:$iTime// if ($iTime < $iNow - 172800);
+                    $sData =~ s/$iPhone:$iTime// if ($iTime < $main::g_iLastWakeTime - 172800);
                 }
                 else {
                     $sData =~ s/$sDataPair//;
@@ -255,7 +252,7 @@ sub usersHealthCheck() {
         }
 
         my $iAfterCount = keys %hDedupeByMessage;
-        my $iDiff       = $iBeforeCount - $iAfterCount;
+        my $iDiff = $iBeforeCount - $iAfterCount;
         debugLog(D_users | D_pageEngine, "cleaned up deduping hash ($iDiff entr" . ($iDiff == 1 ? 'y' : 'ies') . " removed, $iAfterCount remaining)");
     }
 }
@@ -267,7 +264,6 @@ sub blockedByFilter($$$) {
     my $rMessage         = shift;
     my $iLastProblemTime = shift;
     my $sMessage         = ${$rMessage};
-    my $iNow             = time();
     my $sRecoveryRegex   = main::getRecoveryRegex();
     my $sProblemRegex    = main::getProblemRegex();
     my $sRearmedRegex    = 'DSPS Trigger.*rearmed';
@@ -286,7 +282,7 @@ sub blockedByFilter($$$) {
         && ($g_hUsers{$iPhone}->{filter_recoveries} == 2)
         && (($sMessage =~ /$sRecoveryRegex/) || ($sMessage =~ /$sRearmedRegex/))
         && !isDuringWakingHours()
-        && ($iNow - $iLastProblemTime > 300))
+        && ($main::g_iLastWakeTime - $iLastProblemTime > 300))
     {
         debugLog(D_users, "blocked for " . $g_hUsers{$iPhone}->{name} . " ($iPhone) [SmartRecovery]: $sMessage");
         return 'smartRecovery';
@@ -297,15 +293,15 @@ sub blockedByFilter($$$) {
         my $iCount    = $1;
         my $iLastTime = $2;
 
-        if ($iNow - $iLastTime > 60) {
-            $g_hUsers{$iPhone}->{throttle} = '1/' . $iNow;
+        if ($main::g_iLastWakeTime - $iLastTime > 60) {
+            $g_hUsers{$iPhone}->{throttle} = '1/' . $main::g_iLastWakeTime;
         }
         else {
             $g_hUsers{$iPhone}->{throttle} = $iCount + 1 . '/' . $iLastTime;
 
             if (($sMessage =~ /$sProblemRegex/) && ($iCount > (2 * THROTTLE_PAGES + 1))) {
-                if (main::getAllNagiosFilterTillGlobal() < $iNow) {
-                    main::setAllNagiosFilterTillGlobal($iNow + 60 * 30);    # half hour
+                if (main::getAllNagiosFilterTillGlobal() < $main::g_iLastWakeTime) {
+                    main::setAllNagiosFilterTillGlobal($main::g_iLastWakeTime + 60 * 30);    # half hour
                     $g_hUsers{$iPhone}->{throttle} = '';
                     main::sendCustomSystemMessageToRoom($iPhone, S_AutoNagiosMute, 2);
                     return 1;
@@ -322,7 +318,7 @@ sub blockedByFilter($$$) {
         }
     }
     else {
-        $g_hUsers{$iPhone}->{throttle} = '1/' . $iNow;
+        $g_hUsers{$iPhone}->{throttle} = '1/' . $main::g_iLastWakeTime;
     }
 
     return 0;

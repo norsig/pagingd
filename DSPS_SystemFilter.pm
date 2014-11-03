@@ -49,16 +49,15 @@ sub thawState($) {
 sub blockedByFilter($$) {
     my $sMessage = shift;
     my $iRoom    = shift;
-    my $iNow     = time();
 
     # check the recovery or system load filter
-    if (($iFilterRecoveryLoadTill > $iNow) && ($sMessage =~ /(^[-+!]{0,1}RECOVERY)|(System Load)/)) {
+    if (($iFilterRecoveryLoadTill > $main::g_iLastWakeTime) && ($sMessage =~ /(^[-+!]{0,1}RECOVERY)|(System Load)/)) {
         debugLog(D_filters, "message matched Recovery or Load filter");
         return "recovery/load";
     }
 
     # check the all nagios filter
-    if (($iFilterAllNagiosTill > $iNow) && (($sMessage =~ /$g_hConfigOptions{nagios_problem_regex}/) || ($sMessage =~ /$g_hConfigOptions{nagios_recovery_regex}/))) {
+    if (($iFilterAllNagiosTill > $main::g_iLastWakeTime) && (($sMessage =~ /$g_hConfigOptions{nagios_problem_regex}/) || ($sMessage =~ /$g_hConfigOptions{nagios_recovery_regex}/))) {
         debugLog(D_filters, "message matched All Nagios filter");
         return "allNagios";
     }
@@ -67,12 +66,12 @@ sub blockedByFilter($$) {
     foreach my $iRegexFilterID (keys %rFilterRegex) {
         my $sThisRegex = $rFilterRegex{$iRegexFilterID}->{regex};
         $sThisRegex =~ s/(\\s| )/(\\s|)/g;  # to match randomly inserted newlines by the gateway provider
-        if (($rFilterRegex{$iRegexFilterID}->{till} >= $iNow) && ($sMessage =~ /$sThisRegex/i)) {
+        if (($rFilterRegex{$iRegexFilterID}->{till} >= $main::g_iLastWakeTime) && ($sMessage =~ /$sThisRegex/i)) {
             debugLog(D_filters, "message matched Regex filter (" . $rFilterRegex{$iRegexFilterID}->{regex} . ")");
             return "regex";
         }
 
-        rmRegexFilter($rFilterRegex{$iRegexFilterID}->{regex}) if ($rFilterRegex{$iRegexFilterID}->{till} < $iNow);
+        rmRegexFilter($rFilterRegex{$iRegexFilterID}->{regex}) if ($rFilterRegex{$iRegexFilterID}->{till} < $main::g_iLastWakeTime);
     }
 
     # check all regex profiles
@@ -85,9 +84,9 @@ sub blockedByFilter($$) {
                 my ($iTillHour, $iTillMin) = ($rFilterRegexProfile{$iRegexFilterID}->{till} =~ /(\d+):(\d+)/);
                 my $iFrom = $iFromHour * 3600 + $iFromMin * 60;
                 my $iTill = $iTillHour * 3600 + $iTillMin * 60;
-                my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime($iNow);
+                my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime($main::g_iLastWakeTime);
                 my $iMidnight = timelocal(0, 0, 0, $mday, $mon, $year);
-                my $iNowToday = $iNow - $iMidnight;
+                my $iNowToday = $main::g_iLastWakeTime - $iMidnight;
 
                 debugLog(D_filters, "checking regex profile (/$sThisRegex/); now=$iNowToday, window=$iFrom-$iTill");
                 if (($iFrom < $iTill && $iNowToday >= $iFrom && $iNowToday <= $iTill) ||

@@ -51,13 +51,11 @@ sub sendRecentRooms($) {
 
 sub catalogRecentRoom($) {
     my $iRoom = shift;
-    my $iNow = time();
-
     return unless $iRoom;
 
     my @aRecentCopy = @g_aRecentRooms;
     foreach my $tR (@aRecentCopy) {
-        if ($tR->{creation_time} < $iNow - 86400) {
+        if ($tR->{creation_time} < $main::g_iLastWakeTime - 86400) {
             shift @g_aRecentRooms;
             debugLog(D_rooms, "pruned a room");
         }
@@ -96,7 +94,7 @@ sub createRoom {
         occupants_by_phone       => {},
         saved_occupants_by_phone => {},
         most_occupants_by_phone  => {},
-        expiration_time          => time() + ROOM_LENGTH,
+        expiration_time          => $main::g_iLastWakeTime + ROOM_LENGTH,
         escalation_time          => 0,
         escalation_to            => '',
         escalation_orig_sender   => '',
@@ -108,7 +106,7 @@ sub createRoom {
         ack_mode                 => 0,
         last_problem_time        => 0,
         last_human_reply_time    => 0,
-        creation_time            => time(),
+        creation_time            => $main::g_iLastWakeTime,
         last_nonhuman_message    => '',
         summary                  => '',
         sum_reminder_sent        => '',
@@ -141,7 +139,7 @@ sub cloneRoomMinusOccupants($) {
     $g_hRooms{$iNewRoom}->{ack_mode}                = $g_hRooms{$iOrigRoom}->{ack_mode};
     $g_hRooms{$iNewRoom}->{last_problem_time}       = $g_hRooms{$iOrigRoom}->{last_problem_time};
     $g_hRooms{$iNewRoom}->{last_human_reply_time}   = $g_hRooms{$iOrigRoom}->{last_human_reply_time};
-    $g_hRooms{$iNewRoom}->{creation_time}           = time();
+    $g_hRooms{$iNewRoom}->{creation_time}           = $main::g_iLastWakeTime;
     $g_hRooms{$iNewRoom}->{last_nonhuman_message}   = $g_hRooms{$iOrigRoom}->{last_nonhuman_message};
     $g_hRooms{$iNewRoom}->{summary}                 = $g_hRooms{$iOrigRoom}->{summary};
     $g_hRooms{$iNewRoom}->{sum_reminder_sent}       = $g_hRooms{$iOrigRoom}->{sum_reminder_sent};
@@ -448,17 +446,16 @@ sub roomRemoveOccupant {
 
 sub validRoom($) {
     my $iRoom = shift;
-    my $iNow  = time();
 
     unless ($g_hRooms{$iRoom}->{expiration_time} && $g_hRooms{$iRoom}->{occupants_by_phone}) {
         infoLog("ERROR: room $iRoom looks invalid");
 
-        unless ($iLastRoomErrorTime && ($iLastRoomErrorTime > $iNow - 3600)) {
-            $iLastRoomErrorTime = $iNow;
+        unless ($iLastRoomErrorTime && ($iLastRoomErrorTime > $main::g_iLastWakeTime - 3600)) {
+            $iLastRoomErrorTime = $main::g_iLastWakeTime;
             main::sendEmail(main::getAdminEmail(), '',
                     "Subject: DSPS bug detected - invalid room found in roomStatus()\n\nRoom $iRoom doesn't look legit. Check:\n"
                   . "\"grep dsps /var/log/syslog\" just before\n"
-                  . localtime(time()));
+                  . localtime($main::g_iLastWakeTime));
         }
 
         return 0;
@@ -470,13 +467,13 @@ sub validRoom($) {
 
 
 sub roomsHealthCheck {
-    my $iNow = time();
+    debugLog(D_pageEngine, "main::g_iLastWakeTime = $main::g_iLastWakeTime");
 
     foreach my $iRoomNumber (keys %g_hRooms) {
         next unless validRoom($iRoomNumber);
 
         # room half-way to expired
-        if (($g_hRooms{$iRoomNumber}->{expiration_time} <= $iNow + (ROOM_LENGTH / 2))
+        if (($g_hRooms{$iRoomNumber}->{expiration_time} <= $main::g_iLastWakeTime + (ROOM_LENGTH / 2))
             && $g_hRooms{$iRoomNumber}->{last_nonhuman_message})
         {    # it wasn't just a human-to-human chat
 
@@ -495,7 +492,7 @@ sub roomsHealthCheck {
         }
 
         # room expired
-        if ($g_hRooms{$iRoomNumber}->{expiration_time} <= $iNow) {
+        if ($g_hRooms{$iRoomNumber}->{expiration_time} <= $main::g_iLastWakeTime) {
             infoLog("room $iRoomNumber expired with " . keys(%{ $g_hRooms{$iRoomNumber}->{occupants_by_phone} }) . " occupants");
             logRoom($iRoomNumber);
             catalogRecentRoom($iRoomNumber);
@@ -514,7 +511,7 @@ sub logRoom($) {
         open(LOG, ">>$sLogFile") || return infoLog("Unable to write to $sLogFile");
 
         if (($g_hRooms{$iRoom}->{summary} && ($g_hRooms{$iRoom}->{summary} =~ /^(.*?)\s*;\s*(.*)$/)) || !ONLY_LOG_SUMMARIZED) {
-            print LOG localtime($g_hRooms{$iRoom}->{creation_time}) . " for " . prettyDuration(time() - $g_hRooms{$iRoom}->{creation_time}, 1) . "\nAudience: ";
+            print LOG localtime($g_hRooms{$iRoom}->{creation_time}) . " for " . prettyDuration($main::g_iLastWakeTime - $g_hRooms{$iRoom}->{creation_time}, 1) . "\nAudience: ";
             print LOG roomStatus($iRoom, 0, 1, 1) . "\n";
 
             if ($g_hRooms{$iRoom}->{summary} && ($g_hRooms{$iRoom}->{summary} =~ /^(.*?)\s*;\s*(.*)$/)) {

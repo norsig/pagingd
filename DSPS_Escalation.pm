@@ -65,7 +65,7 @@ sub primeEscalation($$$) {
 
     # did the on call person in the room respond within the last 20 minutes?  if so we're not going to prime another escalation
     # this is primiarly to catch flapping nagios issues where the on call person is constantly having to disarm escalations
-    if ($g_hRooms{$iRoom}->{last_human_reply_time} >= time() - 1200) {
+    if ($g_hRooms{$iRoom}->{last_human_reply_time} >= $main::g_iLastWakeTime - 1200) {
         debugLog(D_escalations, $g_hUsers{$iOncallPhone}->{name} . " has responded within the last 20 minutes;  not rearming the escalation");
         return $bRoomChanged;
     }
@@ -74,7 +74,7 @@ sub primeEscalation($$$) {
     # the "minus 60 seconds" here is so we have time to resend the initial page to the on call person a second time (just to be nice) before
     # we actually esclate.  logic is in checkEscalationTimes().
     # the -1 is to offset race conditions so we don't miss a full sleep/select cycle in the main loop
-    $g_hRooms{$iRoom}->{escalation_time}        = time() + $g_hEscalations{$sEscName}->{timer} - 1 - ($g_hEscalations{$sEscName}->{timer} >= 60 ? 60 : 0);
+    $g_hRooms{$iRoom}->{escalation_time}        = $main::g_iLastWakeTime + $g_hEscalations{$sEscName}->{timer} - 1 - ($g_hEscalations{$sEscName}->{timer} >= 60 ? 60 : 0);
     $g_hRooms{$iRoom}->{escalation_to}          = $g_hEscalations{$sEscName}->{escalate_to};
     $g_hRooms{$iRoom}->{escalation_orig_sender} = $sSender;
     $g_hRooms{$iRoom}->{escalation_name}        = $sEscName;
@@ -162,7 +162,6 @@ sub getScheduledOncallPerson($;$) {
 sub getOncallPerson($;$) {
     my $sEscName  = shift;
     my $iPlusDays = shift || 0;
-    my $iNow      = time();
     my $iWeeks    = -1;
     my $iPhone;
 
@@ -171,7 +170,7 @@ sub getOncallPerson($;$) {
     # giving up and in that case returning the on-vacation person anyway.
     do {
         $iPhone = getScheduledOncallPerson($sEscName, $iPlusDays + (++$iWeeks * 7));
-    } while (($g_hUsers{$iPhone}->{vacation_end} > ($iNow + (ONEWEEK * $iWeeks))) && ($iWeeks < 2));
+    } while (($g_hUsers{$iPhone}->{vacation_end} > ($main::g_iLastWakeTime + (ONEWEEK * $iWeeks))) && ($iWeeks < 2));
 
     return $iPhone;
 }
@@ -269,12 +268,10 @@ sub checkEscalationCancel($$) {
 
 
 sub checkEscalationTimes() {
-    my $iNow = time();
-
     foreach my $iRoom (keys %g_hRooms) {
 
         # skip rooms with no escalation timer or where the timer hasn't expired yet
-        next unless ($g_hRooms{$iRoom}->{escalation_time} && ($g_hRooms{$iRoom}->{escalation_time} <= $iNow));
+        next unless ($g_hRooms{$iRoom}->{escalation_time} && ($g_hRooms{$iRoom}->{escalation_time} <= $main::g_iLastWakeTime));
 
         my $sLastMessage = ${ $g_hRooms{$iRoom}->{history} }[$#{ $g_hRooms{$iRoom}->{history} }];
         unless ($sLastMessage) {
@@ -296,7 +293,7 @@ sub checkEscalationTimes() {
         unless ($g_hRooms{$iRoom}->{escalation_time} =~ /\./) {
 
             # about one more minute
-            $g_hRooms{$iRoom}->{escalation_time} = time() + 59.1;
+            $g_hRooms{$iRoom}->{escalation_time} = $main::g_iLastWakeTime + 59.1;
 
             # resend the initial page to the on call person one last time
             main::sendUserMessageToRoom($g_hRooms{$iRoom}->{escalation_orig_sender}, $sLastMessage, 0);

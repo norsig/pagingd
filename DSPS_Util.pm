@@ -63,7 +63,7 @@ sub dequote($) {
 
 
 sub isDuringWakingHours() {
-    my ($iMinute, $iHour) = (localtime(time()))[1 .. 2];
+    my ($iMinute, $iHour) = (localtime($main::g_iLastWakeTime))[1 .. 2];
     return ($iHour > 6 && $iHour < 22);
 }
 
@@ -119,7 +119,7 @@ sub parseDateTime($$$$$) {
     my ($iMonth, $iDay, $iYear, $iHour, $iMinute) = @_;
     if ($iYear < 1000) {$iYear += 2000;}
 
-    my ($iNowSec, $iNowMin, $iNowHour, $iNowDay, $iNowMonth, $iNowYear, $iNowDoW, $iNowDoY, $iNowDST) = localtime(time());
+    my ($iNowSec, $iNowMin, $iNowHour, $iNowDay, $iNowMonth, $iNowYear, $iNowDoW, $iNowDoY, $iNowDST) = localtime($main::g_iLastWakeTime);
     $iNowYear  += 1900;
     $iNowMonth += 1;
 
