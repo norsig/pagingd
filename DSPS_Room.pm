@@ -467,8 +467,6 @@ sub validRoom($) {
 
 
 sub roomsHealthCheck {
-    debugLog(D_pageEngine, "main::g_iLastWakeTime = $main::g_iLastWakeTime");
-
     foreach my $iRoomNumber (keys %g_hRooms) {
         next unless validRoom($iRoomNumber);
 
