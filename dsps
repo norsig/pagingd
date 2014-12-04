@@ -72,6 +72,7 @@ use strict;
 # All the D_xxxxx debug constants are listed in DSPS_Debug.pm.
 #-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 our $g_iDebugTopics = D_all & ~D_users & ~D_state & ~D_configRead & ~D_rooms;
+
 #our $g_iDebugTopics = 0;
 our $g_iTestingDebugTopics = D_all & ~D_users & ~D_state & ~D_configRead & ~D_rooms;
 
@@ -100,7 +101,7 @@ my $g_tListenerSocket;
 my $g_sConfigFilename = '';
 my $g_iTodayDate      = 0;
 my $g_iNumPagesToday  = 0;
-our $g_iLastWakeTime   = time();
+our $g_iLastWakeTime = time();
 
 # these one-liners exist as functions so they can be called by some of the included modules
 # essentially these avoid circular include dependencies
@@ -114,6 +115,7 @@ sub getLogRoomsTo()                 {return $g_hConfigOptions{log_rooms_to};}
 sub getAllNagiosFilterTillGlobal()  {DSPS_SystemFilter::getAllNagiosFilterTill();}
 sub setAllNagiosFilterTillGlobal($) {DSPS_SystemFilter::setAllNagiosFilterTill(shift);}
 sub getSummaryReminder()            {return $g_hConfigOptions{summary_reminder};}
+sub getSummaryText()                {return $g_hConfigOptions{summary_text};}
 sub writeConfig()                   {return DSPS_Config::writeConfig();}
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -380,21 +382,20 @@ sub replaceUserMacros($$) {
     my $iSender            = shift;
     my $sMessage           = shift;
     my $sCompressedMessage = $sMessage;
-    my $sAt                = $g_hConfigOptions{require_at} ? '@' : '\b';
     $sCompressedMessage =~ s/\n//g;
 
     # look for sender's macros
     my %hMacros = defined($g_hUsers{$iSender}->{macros}) ? %{ $g_hUsers{$iSender}->{macros} } : ();
     foreach my $sMacro (keys %hMacros) {
 
-        if ($sMessage =~ /$sAt($sMacro)\b/i) {
-            $sMessage =~ s/$sAt($sMacro)\b/$hMacros{$sMacro}/gi;
+        if ($sMessage =~ /\b($sMacro)\b/i) {
+            $sMessage =~ s/\b($sMacro)\b/$hMacros{$sMacro}/gi;
             $sCompressedMessage = $sMessage;
             $sCompressedMessage =~ s/\n//g;
             infoLog("interpolated user's macro $sMacro");
         }
-        elsif ($sCompressedMessage =~ /$sAt($sMacro)\b/i) {
-            $sCompressedMessage =~ s/$sAt($sMacro)\b/$hMacros{$sMacro}/gi;
+        elsif ($sCompressedMessage =~ /\b($sMacro)\b/i) {
+            $sCompressedMessage =~ s/\b($sMacro)\b/$hMacros{$sMacro}/gi;
             $sMessage = $sCompressedMessage;
             infoLog("interpolated compressed user's macro $sMacro");
         }
@@ -528,7 +529,7 @@ sub sendSmsPage($$) {
 
     # because we fork all outgoing messages into child procs they finish at different times.
     # there's no way to predict which will get to the user first.  we still can't guarantee but
-    # if we add a second of sleep before audience update lines hopefully the actual messages
+    # if we add a few seconds of sleep before audience update lines hopefully the actual messages
     # will get there first and the audience updates second.
     sleep(4) if ($sMessage =~ /^.{0,5}((Audience is now)|(DSPS Trigger))/);
 
@@ -539,10 +540,11 @@ sub sendSmsPage($$) {
     my $iTry = 0;
     while ($iTry++ < 2) {
         my $iStartTime = Time::HiRes::time();
-        my $tResponse = $tBrowser->post($g_hConfigOptions{gateway_url}, \%hGatewayParams);
-        my $iElapsed = sprintf("%.2f", Time::HiRes::time() - $iStartTime);
-        debugLog(D_pageEngine, "PAGE " . $g_hUsers{$iCellNumber}->{name} . " ($iCellNumber) [" . $tResponse->code() . ($tResponse->code() == 200 ? '' : ".t$iTry") . " in $iElapsed]: $sMessage");
- 
+        my $tResponse  = $tBrowser->post($g_hConfigOptions{gateway_url}, \%hGatewayParams);
+        my $iElapsed   = sprintf("%.2f", Time::HiRes::time() - $iStartTime);
+        debugLog(D_pageEngine,
+            "PAGE " . $g_hUsers{$iCellNumber}->{name} . " ($iCellNumber) [" . $tResponse->code() . ($tResponse->code() == 200 ? '' : ".t$iTry") . " in $iElapsed]: $sMessage");
+
         last if ($tResponse->is_success);
 
         if (open(ERROR_LOG, ">>/tmp/dsps.gateway.error")) {
@@ -550,9 +552,9 @@ sub sendSmsPage($$) {
             print ERROR_LOG $tResponse->content() . "\n-------------------------------------------------------\n\n";
             close(ERROR_LOG);
         }
-    
+
         my $iWaitDuration = 300;
-        my $iLastMTime = 0;
+        my $iLastMTime    = 0;
 
         # if there's an error state file we use its mtime as the time of the last error
         # and its contents as the last amount of time we waited between errors
@@ -598,13 +600,14 @@ sub filterStatus($) {
     $sResult = "USR\nRecoveries: " . ($g_hUsers{$iSender}->{filter_recoveries} == 1 ? 'blocked' : $g_hUsers{$iSender}->{filter_recoveries} == 2 ? 'smart' : 'allowed') . "\n\n" if $iSender;
 
     $sResult .= "SYS\nLoad&Recvr: " . ($DSPS_SystemFilter::iFilterRecoveryLoadTill > $g_iLastWakeTime ? 'blocked'                                                : 'allowed') . "\n";
-    $sResult .= "AllNagios: " .       ($DSPS_SystemFilter::iFilterAllNagiosTill > $g_iLastWakeTime ? prettyDateTime($DSPS_SystemFilter::iFilterAllNagiosTill) : 'allowed') . "\n";
+    $sResult .= "AllNagios: " .       ($DSPS_SystemFilter::iFilterAllNagiosTill > $g_iLastWakeTime    ? prettyDateTime($DSPS_SystemFilter::iFilterAllNagiosTill) : 'allowed') . "\n";
     $sResult .= "\nRegex:\n";
 
     my $sRegex = '';
     foreach my $iRegexID (sort keys %DSPS_SystemFilter::rFilterRegex) {
         if ($DSPS_SystemFilter::rFilterRegex{$iRegexID}->{till} > $g_iLastWakeTime) {
-            $sRegex .= ' ' . ($iSender ? '' : ' [' . prettyDateTime($DSPS_SystemFilter::rFilterRegex{$iRegexID}->{till}) . '] ') . '/' . $DSPS_SystemFilter::rFilterRegex{$iRegexID}->{regex} . "/\n";
+            $sRegex .=
+              ' ' . ($iSender ? '' : ' [' . prettyDateTime($DSPS_SystemFilter::rFilterRegex{$iRegexID}->{till}) . '] ') . '/' . $DSPS_SystemFilter::rFilterRegex{$iRegexID}->{regex} . "/\n";
         }
     }
 
@@ -707,14 +710,23 @@ sub handlePagingCommands($$) {
             my $bRoomStatus = 0;
 
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':maint')) {
-                my $sMaintUser = (defined($sParams) && $sParams) ? '@' . $sParams : (defined($g_hConfigOptions{default_maint}) && $g_hConfigOptions{default_maint}) ? '@' . $g_hConfigOptions{default_maint} : '';
+                my $sMaintUser =
+                    (defined($sParams)                         && $sParams)                         ? '@' . $sParams
+                  : (defined($g_hConfigOptions{default_maint}) && $g_hConfigOptions{default_maint}) ? '@' . $g_hConfigOptions{default_maint}
+                  :                                                                                   '';
 
                 if ($sMaintUser && (my $iUserCell = DSPS_User::matchUserByRegex($sMaintUser))) {
-                    my $iUserRoom = DSPS_Room::findUsersRoom($iUserCell);
+                    my $iUserRoom   = DSPS_Room::findUsersRoom($iUserCell);
                     my $iSenderRoom = DSPS_Room::findUsersRoom($iSender);
 
                     if ($iSenderRoom && $iSenderRoom == $iUserRoom && $g_hRooms{$iSenderRoom}->{maintenance}) {
-                        sendSmsPage($iSender, t("This room is already in maintenance mode and " . $g_hUsers{$iUserCell}->{name} . " is part of the audience."));
+                        if ($g_hRooms{$iSenderRoom}->{last_maint_warning}) {
+                            $g_hRooms{$iSenderRoom}->{expiration_time} = $g_iLastWakeTime + ROOM_LENGTH;
+                            sendSmsPage($iSender, t("Maintenance room extended."));
+                        }
+                        else {
+                            sendSmsPage($iSender, t("This room is already in maintenance mode and " . $g_hUsers{$iUserCell}->{name} . " is part of the audience."));
+                        }
                         return 1;
                     }
                 }
@@ -726,7 +738,7 @@ sub handlePagingCommands($$) {
 
                     # put the room in maintenancd mode
                     # note that we call findUsersRoom() again because it may have changed after processMentions()
-                    $g_hRooms{DSPS_Room::findUsersRoom($iSender)}->{maintenance} = 1;
+                    $g_hRooms{ DSPS_Room::findUsersRoom($iSender) }->{maintenance} = 1;
 
                     sendSystemMessageToRoom($iSender, S_NowInMaint, $iSilenceModifier);
                 }
@@ -1459,8 +1471,8 @@ sub processMentions($$$;$) {
             debugLog(D_pageEngine, "found mention of alias $sAlias");
             my $sOrigMessage = $sScanMessage;
             $sScanMessage =~ s/$sAt($sAlias)\b/$g_hAliases{$sAlias}->{referent}/gi;
-            $bRoomChanged = (processMentions($sSender, $sScanMessage, $sRealMessage) > 0) || $bRoomChanged;
-            $sScanMessage = $sOrigMessage;
+            $bRoomChanged  = (processMentions($sSender, $sScanMessage, $sRealMessage) > 0) || $bRoomChanged;
+            $sScanMessage  = $sOrigMessage;
             $bFoundSomeone = 1;
         }
     }
@@ -1725,9 +1737,12 @@ sub sendSystemMessageToRoom($$$) {
 #   - sending to just a single user if no room
 #   - silence modifier logic
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-sub sendCustomSystemMessageToRoom($$$) {
-    my ($iSender, $sMessage, $iSilenceModifier) = @_;
-    my $iRoom = DSPS_Room::findUsersRoom($iSender);
+sub sendCustomSystemMessageToRoom($$$;$) {
+    my $iSender               = shift;
+    my $sMessage              = shift;
+    my $iSilenceModifier      = shift;
+    my $bDontUpdateExpiration = shift || 0;
+    my $iRoom                 = DSPS_Room::findUsersRoom($iSender);
 
     # if the user isn't in a room then just send the message to that one person
     unless ($iRoom) {
@@ -1736,7 +1751,7 @@ sub sendCustomSystemMessageToRoom($$$) {
     }
 
     # update room expiration
-    $g_hRooms{$iRoom}->{expiration_time} = $g_iLastWakeTime + ROOM_LENGTH;
+    $g_hRooms{$iRoom}->{expiration_time} = $g_iLastWakeTime + ROOM_LENGTH unless $bDontUpdateExpiration;
 
     # loop through all room occupants
     foreach my $iUserPhone (keys %{ $g_hRooms{$iRoom}->{occupants_by_phone} }) {
@@ -1823,106 +1838,139 @@ sub checkUserOverride($$) {
 # Returns how the message was handled.
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub processPageEngine($$) {
-    my ($sSender, $sOrigMessage) = @_;
+    my ($sSender, $sGivenMessage) = @_;
     my $iSender;
     my $bRoomChanged = 0;
-    my $bBypass      = ($sOrigMessage =~ /^\!/);
 
     # verify the sender;  note the below is assignment, not a test
     return 'Unknown paging user.' unless ($iSender = verifySendingUser($sSender));
 
-    debugLog(D_pageEngine, "starting engine with iSender = $iSender, message = $sOrigMessage");
-    my $iRoom = DSPS_Room::findUsersRoom($iSender);
-
     # substitute in user macros unless it's a paging command or a bypass message
-    $sOrigMessage = replaceUserMacros($iSender, $sOrigMessage) unless ($sOrigMessage =~ /^\s*[?:!]/);
-    my $sMessage = $sOrigMessage;
+    $sGivenMessage = replaceUserMacros($iSender, $sGivenMessage) unless ($sGivenMessage =~ /^\s*[?:!]/);
 
-    # paging gateway companies insert random CRs that ruin our regexes
-    $sMessage =~ s/\n//g;
+    # allow for \n in commands to separate multiple commands
+    # parse the \n and break into separate commands, unless enclosed in quotes
+    my @aCommands;
+    my $sCurrentCmd = '';
+    while ($sGivenMessage =~ /([^'"]+)|"([^"]*)"|'([^']*)'/mg) {
+        if ($1) {
+            my $sData = $1;
 
-    # check for escalation cancel possibilities
-    # if the escalation was canceled by a RECOVERY then we prefix the message with '-'
-    substr($sOrigMessage, 0, 0) = '-' if DSPS_Escalation::checkEscalationCancel($iSender, $sMessage);
+            while ((my $iFirstN = index($sData, "\\n")) >= 0) {
+                $sCurrentCmd .= substr($sData, 0, $iFirstN);
+                substr($sData, 0, $iFirstN + 2) = '';
+                push(@aCommands, $sCurrentCmd);
+                $sCurrentCmd = '';
+            }
 
-    # determine if the sender's room (if they're in one) is in maintenance mode
-    my $bMaintRoom = $iRoom ? $g_hRooms{$iRoom}->{maintenance} : 0;
+            if ($sData) {
+                $sCurrentCmd .= $sData;
+            }
 
-    # see if there are paging commands to address
-    unless (handlePagingCommands($iSender, $sMessage)) {
-
-        # drop messages blocked by one of our system filters
-        if (!DSPS_User::humanUsersPhone($iSender) && (my $sFiltered = DSPS_SystemFilter::blockedByFilter($sMessage, $iRoom))) {
-            logPage($iSender, $sMessage, "FILTERED ($sFiltered)");
-            return "Blocked by system filter ($sFiltered)";
         }
+        else {
+            $sCurrentCmd .= $2 ? $2 : $3;
+        }
+    }
 
-        # only pull other people in if its a human talking or a non-maintenance room
-        if (DSPS_User::humanUsersPhone($iSender) || !$bMaintRoom) {
+    if ($sCurrentCmd) {
+        push(@aCommands, $sCurrentCmd);
+    }
 
-            # pull people, groups, etc into the room who are mentioned
-            # also sets up escalation timers for oncall mentions
-            unless ($bBypass) {
-                if ($g_hUsers{$iSender}->{auto_include}) {
-                    debugLog(D_pageEngine, "redirect is set for user " . $g_hUsers{$iSender}->{name} . "; only adding " . $g_hUsers{$iSender}->{auto_include});
-                    $bRoomChanged = (processMentions($iSender, $g_hUsers{$iSender}->{auto_include}, $sOrigMessage) > 0) || $bRoomChanged;
-                }
-                else {
-                    DSPS_Room::checkpointOccupants($iRoom) if $iRoom;
-                    $bRoomChanged = (processMentions($iSender, $sMessage, $sOrigMessage) > 0) || $bRoomChanged;
+    # loop through multiple commands in a single page (separated by '\n' text)
+    foreach my $sOrigMessage (@aCommands) {
+        my $sMessage = $sOrigMessage;
+        my $bBypass  = ($sOrigMessage =~ /^\!/);
 
-                    # at this point $iRoom is the room the sender was in when this function started.  it may be 0 if the person wasn't in
-                    # a room, even if the above processMention() has now put them in a room.  but if they weren't in a room at the start
-                    # then there's no point in the below logic as there's no room history to search.  we also don't want to run this because
-                    # it will instantiate a non-existent room (#0).  hence, "if ($iRoom)"
-                    if ($iRoom && DSPS_User::humanUsersPhone($iSender) && $g_hRooms{$iRoom}->{last_nonhuman_message}) {
+        debugLog(D_pageEngine, "starting engine with iSender = $iSender, message = $sOrigMessage");
+        my $iRoom = DSPS_Room::findUsersRoom($iSender);
 
-                        if (   $g_hRooms{$iRoom}->{escalation_orig_sender}
-                            && !DSPS_User::humanUsersPhone($g_hRooms{$iRoom}->{escalation_orig_sender})
-                            && ($g_hRooms{$iRoom}->{last_problem_time} >= $g_iLastWakeTime - 120))
-                        {
+        # paging gateway companies insert random CRs that ruin our regexes
+        $sMessage =~ s/\n//g;
 
-                            foreach my $iNewPhone (DSPS_Room::diffOccupants($iRoom)) {
-                                sendSmsPage($iNewPhone, 'RESEND: ' . $g_hRooms{$iRoom}->{last_nonhuman_message});
+        # check for escalation cancel possibilities
+        # if the escalation was canceled by a RECOVERY then we prefix the message with '-'
+        substr($sOrigMessage, 0, 0) = '-' if DSPS_Escalation::checkEscalationCancel($iSender, $sMessage);
+
+        # determine if the sender's room (if they're in one) is in maintenance mode
+        my $bMaintRoom = $iRoom ? $g_hRooms{$iRoom}->{maintenance} : 0;
+
+        # see if there are paging commands to address
+        unless (handlePagingCommands($iSender, $sMessage)) {
+
+            # drop messages blocked by one of our system filters
+            if (!DSPS_User::humanUsersPhone($iSender) && (my $sFiltered = DSPS_SystemFilter::blockedByFilter($sMessage, $iRoom))) {
+                logPage($iSender, $sMessage, "FILTERED ($sFiltered)");
+                return "Blocked by system filter ($sFiltered)";
+            }
+
+            # only pull other people in if its a human talking or a non-maintenance room
+            if (DSPS_User::humanUsersPhone($iSender) || !$bMaintRoom) {
+
+                # pull people, groups, etc into the room who are mentioned
+                # also sets up escalation timers for oncall mentions
+                unless ($bBypass) {
+                    if ($g_hUsers{$iSender}->{auto_include}) {
+                        debugLog(D_pageEngine, "redirect is set for user " . $g_hUsers{$iSender}->{name} . "; only adding " . $g_hUsers{$iSender}->{auto_include});
+                        $bRoomChanged = (processMentions($iSender, $g_hUsers{$iSender}->{auto_include}, $sOrigMessage) > 0) || $bRoomChanged;
+                    }
+                    else {
+                        DSPS_Room::checkpointOccupants($iRoom) if $iRoom;
+                        $bRoomChanged = (processMentions($iSender, $sMessage, $sOrigMessage) > 0) || $bRoomChanged;
+
+                        # at this point $iRoom is the room the sender was in when this function started.  it may be 0 if the person wasn't in
+                        # a room, even if the above processMention() has now put them in a room.  but if they weren't in a room at the start
+                        # then there's no point in the below logic as there's no room history to search.  we also don't want to run this because
+                        # it will instantiate a non-existent room (#0).  hence, "if ($iRoom)"
+                        if ($iRoom && DSPS_User::humanUsersPhone($iSender) && $g_hRooms{$iRoom}->{last_nonhuman_message}) {
+
+                            if (   $g_hRooms{$iRoom}->{escalation_orig_sender}
+                                && !DSPS_User::humanUsersPhone($g_hRooms{$iRoom}->{escalation_orig_sender})
+                                && ($g_hRooms{$iRoom}->{last_problem_time} >= $g_iLastWakeTime - 120))
+                            {
+
+                                foreach my $iNewPhone (DSPS_Room::diffOccupants($iRoom)) {
+                                    sendSmsPage($iNewPhone, 'RESEND: ' . $g_hRooms{$iRoom}->{last_nonhuman_message});
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        # redetermine user's room after the procesMentions()
-        $iRoom = DSPS_Room::findUsersRoom($iSender);
+            # redetermine user's room after the procesMentions()
+            $iRoom = DSPS_Room::findUsersRoom($iSender);
 
-        # check for & potentially set broadcast mode
-        if ($sOrigMessage =~ /^\^(.*)/) {
-            $sOrigMessage = $1;    # drop carret
+            # check for & potentially set broadcast mode
+            if ($sOrigMessage =~ /^\^(.*)/) {
+                $sOrigMessage = $1;    # drop carret
 
-            if ($iRoom) {
+                if ($iRoom) {
 
-                # is the room already in broadcast mode?
-                if ($g_hRooms{$iRoom}->{broadcast_speaker} && (($iSender ne $g_hRooms{$iRoom}->{broadcast_speaker}) && !DSPS_CmdPermission::checkPermissions($iSender, '^'))) {
-                    sendSmsPage($iSender, t(S_NoReBroadcast));
-                }
-                else {
-                    $g_hRooms{$iRoom}->{broadcast_speaker} = $iSender;
-                    debugLog(D_pageEngine, "Room $iRoom set to broadcast mode via message from " . $g_hUsers{$iSender}->{name} . " ($iSender)");
-                    $bRoomChanged = "BROADCAST: replies only go to " . $g_hUsers{$iSender}->{name} . ';';
+                    # is the room already in broadcast mode?
+                    if ($g_hRooms{$iRoom}->{broadcast_speaker} && (($iSender ne $g_hRooms{$iRoom}->{broadcast_speaker}) && !DSPS_CmdPermission::checkPermissions($iSender, '^'))) {
+                        sendSmsPage($iSender, t(S_NoReBroadcast));
+                    }
+                    else {
+                        $g_hRooms{$iRoom}->{broadcast_speaker} = $iSender;
+                        debugLog(D_pageEngine, "Room $iRoom set to broadcast mode via message from " . $g_hUsers{$iSender}->{name} . " ($iSender)");
+                        $bRoomChanged = "BROADCAST: replies only go to " . $g_hUsers{$iSender}->{name} . ';';
+                    }
                 }
             }
+
+            # remove any hidden aliases, remove redundant spaces
+            $sOrigMessage = messagePostFixUp($sOrigMessage) unless $bBypass;
+
+            sendUserMessageToRoom($iSender, $sOrigMessage, $bRoomChanged);
         }
 
-        # remove any hidden aliases, remove redundant spaces
-        $sOrigMessage = messagePostFixUp($sOrigMessage) unless $bBypass;
+        # if this is a human reply record the time in the room
+        $g_hRooms{$iRoom}->{last_human_reply_time} = $g_iLastWakeTime if ((defined $g_hRooms{$iRoom}) && DSPS_User::humanUsersPhone($iSender));
 
-        sendUserMessageToRoom($iSender, $sOrigMessage, $bRoomChanged);
+        # check for and potentially fire any valid triggers
+        DSPS_Trigger::checkAllTriggers($iSender, $sOrigMessage);
     }
-
-    # if this is a human reply record the time in the room
-    $g_hRooms{$iRoom}->{last_human_reply_time} = $g_iLastWakeTime if ((defined $g_hRooms{$iRoom}) && DSPS_User::humanUsersPhone($iSender));
-
-    # check for and potentially fire any valid triggers
-    DSPS_Trigger::checkAllTriggers($iSender, $sOrigMessage);
 
     return 'Message submitted.';
 }
@@ -2130,8 +2178,8 @@ sub daemonMain() {
                             elsif ($oRequest->uri->path eq '/status') {
                                 my $sTriggers = DSPS_Trigger::triggerStatus();
                                 my $sProfiles = DSPS_SystemFilter::profileStatus();
-                                my $sStatus = "CURRENT ROOM OCCUPANTS\n" . DSPS_Room::roomStatus(0, 0, 0, 0, 0, 1) . "\n\n";
-                                $sStatus .= "RECENT ROOMS\n" . DSPS_Room::sendRecentRooms(0) . "\n" .  filterStatus(0) . ($sTriggers ? "\n$sTriggers\n" : '');
+                                my $sStatus   = "CURRENT ROOM OCCUPANTS\n" . DSPS_Room::roomStatus(0, 0, 0, 0, 0, 1) . "\n\n";
+                                $sStatus .= "RECENT ROOMS\n" . DSPS_Room::sendRecentRooms(0) . "\n" . filterStatus(0) . ($sTriggers ? "\n$sTriggers" : '');
                                 $sStatus .= ($sProfiles ? "\n$sProfiles\n" : '');
                                 $oConnection->send_response(HTTP::Response->new(201, 'OK', HTTP::Headers->new(), $sLiveStatus . $sStatus));
                             }
@@ -2159,6 +2207,9 @@ sub daemonMain() {
 
                 # fire off escalations that are due
                 DSPS_Escalation::checkEscalationTimes();
+
+                # send warning if a :maint room is expiring
+                DSPS_Room::maintRoomWarningCheck();
             }
         };
 
@@ -2203,7 +2254,7 @@ sub showUsage() {
 "dsps [-d | -s | -e | -i | -p escalation] [-c config_file] [-u user] [-x user] [message]\n   -d  (re)start the paging daemon in the background\n   -t  start the paging daemon in the foreground (for testing)\n   -s  submit a message (pipe to stdin or via CLI)\n";
     print "   -e  submit an email (pipe to stdin or via CLI), i.e. ignore headers\n   -u  specify the submitting paging user\n   -p  print current oncall schedule for a given escalation\n";
     print
-"   -f  fast message submission to the daemon; don't wait for processing\n   -c  specify a config filename (default /etc/dsps.conf)\n   -x  exclusive page user (ignore rooms & daemon)\n   -i  show current status (info)\n   -v  show current version\n   -ts run internal test suite\n";
+"   -f  fast message submission to the daemon; don't wait for processing\n   -c  specify a config filename (default /etc/dsps.conf)\n   -x  exclusive page user (ignore rooms & daemon)\n   -i  show current status (info)\n   -v  show current version\n   -ts run internal test suite\n   -m  show metrics\n";
     print "\nRoom log attributes:\n";
     print "  [B] broadcast mode\n";
     print "  [M] maintenance mode\n";
@@ -2294,6 +2345,7 @@ sub clientStartup() {
     my $bVersion         = 0;
     my $bTestSuite       = 0;
     my $bDebugTestSuite  = 0;
+    my $bShowMetrics     = 0;
     my $sUser            = '';
     my $sEscalation      = '';
     my $sExclusivePerson = '';
@@ -2307,6 +2359,7 @@ sub clientStartup() {
         'x=s'      => \$sExclusivePerson,
         'i'        => \$bCmdStatus,
         'v'        => \$bVersion,
+        'm'        => \$bShowMetrics,
         'ts'       => \$bTestSuite,
         'tsd'      => \$bDebugTestSuite,
         'config=s' => \$g_sConfigFilename,
@@ -2330,6 +2383,31 @@ sub clientStartup() {
 
     if ($bTestSuite || $bDebugTestSuite) {
         DSPS_Test::startTests($bDebugTestSuite);
+        exit;
+    }
+
+    if ($bShowMetrics) {
+        if (open(MET, C_MetricLog)) {
+            my $sDay      = '';
+            my $iDayTotal = 0;
+            while (<MET>) {
+                if (/^(\d+):\s+(\d+)$/) {
+                    if ($sDay ne $1) {
+                        print("Day $sDay, $iDayTotal page" . ($iDayTotal > 1 ? 's' : '') . "\n") if ($sDay && $iDayTotal);
+                        $sDay      = $1;
+                        $iDayTotal = $2;
+                    }
+                    else {
+                        $iDayTotal += $2;
+                    }
+                }
+            }
+            close(MET);
+            print("Day $sDay, $iDayTotal page" . ($iDayTotal > 1 ? 's' : '') . "\n") if ($sDay && $iDayTotal);
+        }
+        else {
+            print "There are no available metrics (" . C_MetricLog . " not found).\n";
+        }
         exit;
     }
 
@@ -2485,7 +2563,7 @@ sub clientStartup() {
         else {
             $g_bTEST_RUN = 3 unless $g_bTEST_RUN;    # i.e. if already hardcoded to '1' then don't override that
             print "  *** RUNNING IN FOREGROUND ***\n";
-            $g_iDebugTopics = $g_iTestingDebugTopics; 
+            $g_iDebugTopics = $g_iTestingDebugTopics;
             daemonMain();
         }
         exit(0);

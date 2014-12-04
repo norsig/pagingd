@@ -103,6 +103,7 @@ sub createRoom {
         broadcast_speaker        => 0,
         history                  => [],
         maintenance              => 0,
+        last_maint_warning       => 0,
         ack_mode                 => 0,
         last_problem_time        => 0,
         last_human_reply_time    => 0,
@@ -477,13 +478,13 @@ sub roomsHealthCheck {
 
             # admin has summary reminders enabled, it's day-time,
             # summary hasn't been set and reminder hasn't been sent
-            if (   main::getSummaryReminder()
+            if (main::getSummaryReminder() && main::getSummaryText()
                 && isDuringWakingHours()
                 && !$g_hRooms{$iRoomNumber}->{summary}
-                && !$g_hRooms{$iRoomNumber}->{sum_reminder_sent})
-            {
+                && !$g_hRooms{$iRoomNumber}->{sum_reminder_sent}) {
 
-                main::sendCustomSystemMessageToRoom((keys(%{ $g_hRooms{$iRoomNumber}->{occupants_by_phone} }))[0], S_SummaryReminder, 0);
+                my @aReminderText = split('\s*\|\s*', main::getSummaryText());
+                main::sendCustomSystemMessageToRoom((keys(%{ $g_hRooms{$iRoomNumber}->{occupants_by_phone} }))[0], $aReminderText[int(rand($#aReminderText+1))], 0);
                 $g_hRooms{$iRoomNumber}->{sum_reminder_sent} = 1;
             }
 
@@ -495,6 +496,19 @@ sub roomsHealthCheck {
             logRoom($iRoomNumber);
             catalogRecentRoom($iRoomNumber);
             delete $g_hRooms{$iRoomNumber};
+        }
+    }
+}
+
+
+sub maintRoomWarningCheck() {
+    foreach my $iRoom (keys %g_hRooms) {
+        next unless ($g_hRooms{$iRoom}->{maintenance});
+
+        if (($g_hRooms{$iRoom}->{expiration_time} - $main::g_iLastWakeTime < 600) &&       # room expires within 10 mins
+            ($main::g_iLastWakeTime - $g_hRooms{$iRoom}->{last_maint_warning} > 2700)) {   # warning not sent for last 45 mins
+            $g_hRooms{$iRoom}->{last_maint_warning} = $main::g_iLastWakeTime;
+            main::sendCustomSystemMessageToRoom((keys(%{ $g_hRooms{$iRoom}->{occupants_by_phone} }))[0], "Your :maint room is about to expire.  Reply within the next 10 minutes to extend it.", 1, 1);    
         }
     }
 }
