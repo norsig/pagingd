@@ -1850,6 +1850,18 @@ sub processPageEngine($$) {
 
     # allow for \n in commands to separate multiple commands
     # parse the \n and break into separate commands, unless enclosed in quotes
+
+    # first we break the string into quoted vs non-quoted sections.  then we break the \n's
+    # into separate commands provided they're in the non-quoted section.  for example:
+    #        the big cow\nwould never "imagine there\nmight" be another option.
+    # that would be parsed ad the following separate commands:
+    #   the big cow
+    #   would never imagine there\nmight be another option
+    # the embedded \n is preserved due to the quotes.
+    
+    # primarily this is useful for putting multiple commands in a single macro
+    #   :macro FOO ":maint\n:nore 2h database"
+
     my @aCommands;
     my $sCurrentCmd = '';
     while ($sGivenMessage =~ /([^'"]+)|"([^"]*)"|'([^']*)'/mg) {
@@ -2254,13 +2266,39 @@ sub showUsage() {
 "dsps [-d | -s | -e | -i | -p escalation] [-c config_file] [-u user] [-x user] [message]\n   -d  (re)start the paging daemon in the background\n   -t  start the paging daemon in the foreground (for testing)\n   -s  submit a message (pipe to stdin or via CLI)\n";
     print "   -e  submit an email (pipe to stdin or via CLI), i.e. ignore headers\n   -u  specify the submitting paging user\n   -p  print current oncall schedule for a given escalation\n";
     print
-"   -f  fast message submission to the daemon; don't wait for processing\n   -c  specify a config filename (default /etc/dsps.conf)\n   -x  exclusive page user (ignore rooms & daemon)\n   -i  show current status (info)\n   -v  show current version\n   -ts run internal test suite\n   -m  show metrics\n";
+"   -f  fast message submission to the daemon; don't wait for processing\n   -c  specify a config filename (default /etc/dsps.conf)\n   -x  exclusive page user (ignore rooms & daemon)\n   -i  show current status (info)\n   -v  show current version\n   -ts run internal test suite\n   -m  show metrics\n   -h  show extra help\n";
     print "\nRoom log attributes:\n";
     print "  [B] broadcast mode\n";
     print "  [M] maintenance mode\n";
     print "  [A] acknowledgement mode\n";
     print "  [T] ticket number associated\n";
     print "  [E] escalation armed\n";
+}
+
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Print CLI extra help
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+sub showExtraHelp() {
+    print "Filter Types:\n";
+    print "  Block all nagios (:nonagios)\n";
+    print "  Block all load & recovery (:sleep)\n";
+    print "  Block all recoveries (:norecovery)\n";
+    print "  Block recoveries at night unless within 3 minutes of a problem (:smartrecovery)\n";
+    print "  Block a given regex for a limited duration (:noregex)\n";
+    print "  Block a given regex between given hours every day (regex profile in config file)\n";
+#    maint ack trig sum
+    print "  Block repeats of the same message in a room - auto acknowledgement mode (:ack)\n";
+    print "\n";
+    print "Maintenance mode (:maint)\n";
+    print "  - automatically pulls the default maint user (config file) into a room with you\n";
+    print "  - prevents non-human users from calling others into the room\n";
+    print "\n";
+    print "Triggers can be used to run a shell command when a particular page is detected\n";
+    print "  - use :arm, :disarm, ?triggers\n";
+    print "\n";
+    print "A weekly email report can list times, occupants and summaries of each conversation\n";
+    print "  - use :summary\n";
 }
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -2346,6 +2384,7 @@ sub clientStartup() {
     my $bTestSuite       = 0;
     my $bDebugTestSuite  = 0;
     my $bShowMetrics     = 0;
+    my $bShowExtraHelp   = 0;
     my $sUser            = '';
     my $sEscalation      = '';
     my $sExclusivePerson = '';
@@ -2360,6 +2399,7 @@ sub clientStartup() {
         'i'        => \$bCmdStatus,
         'v'        => \$bVersion,
         'm'        => \$bShowMetrics,
+        'h'        => \$bShowExtraHelp,
         'ts'       => \$bTestSuite,
         'tsd'      => \$bDebugTestSuite,
         'config=s' => \$g_sConfigFilename,
@@ -2383,6 +2423,11 @@ sub clientStartup() {
 
     if ($bTestSuite || $bDebugTestSuite) {
         DSPS_Test::startTests($bDebugTestSuite);
+        exit;
+    }
+
+    if ($bShowExtraHelp) {
+        showExtraHelp();
         exit;
     }
 
