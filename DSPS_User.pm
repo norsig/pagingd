@@ -25,6 +25,7 @@ sub createUser {
         group             => $_[3],
         access_level      => $_[4] || 0,
         auto_include      => '',
+        via               => '',
         macros            => {},
         filter_recoveries => 0,
         vacation_end      => 0,

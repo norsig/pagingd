@@ -101,6 +101,7 @@ my $g_tListenerSocket;
 my $g_sConfigFilename = '';
 my $g_iTodayDate      = 0;
 my $g_iNumPagesToday  = 0;
+my $g_bNoConfirm      = 0;
 our $g_iLastWakeTime = time();
 
 # these one-liners exist as functions so they can be called by some of the included modules
@@ -259,6 +260,7 @@ sub sendEmail($$$) {
     return if ($g_bTEST_RUN > 1);
     return infoLog("ERROR:  cannot send mail without 'smtp_server' set in config file") unless $g_hConfigOptions{smtp_server};
     return infoLog("WARNING: cannot send mail without a recipient") unless ($sTo || $sCc);
+    return infoLog("Email suppressed due to NoConfirm command line option") if ($g_bNoConfirm);
 
     my $tSMTP = Net::SMTP->new($g_hConfigOptions{smtp_server});
     $tSMTP->mail($sFrom);
@@ -487,6 +489,8 @@ sub sendSmsPage($$) {
         return;
     }
 
+    return infoLog("Page to " . $g_hUsers{$iCellNumber}->{name} . " suppressed due to NoConfirm command line option") if ($g_bNoConfirm);
+
     # append a random character to make the message unique
     # (sms gateway companies often filter out dupes)
     if (DSPS_User::previouslySentTo($iCellNumber, $sMessage)) {
@@ -539,18 +543,24 @@ sub sendSmsPage($$) {
 
     my $iTry = 0;
     while ($iTry++ < 2) {
-        my $iStartTime = Time::HiRes::time();
-        my $tResponse  = $tBrowser->post($g_hConfigOptions{gateway_url}, \%hGatewayParams);
-        my $iElapsed   = sprintf("%.2f", Time::HiRes::time() - $iStartTime);
-        debugLog(D_pageEngine,
-            "PAGE " . $g_hUsers{$iCellNumber}->{name} . " ($iCellNumber) [" . $tResponse->code() . ($tResponse->code() == 200 ? '' : ".t$iTry") . " in $iElapsed]: $sMessage");
 
-        last if ($tResponse->is_success);
+        if ($g_hUsers{$iCellNumber}->{via}) {
+            sendEmail($iCellNumber . '@' . $g_hConfigVias{$g_hUsers{$iCellNumber}->{via}}, '', "\n\n" . $sMessage);
+            last;
+        }
+        else {
+            my $iStartTime = Time::HiRes::time();
+            my $tResponse  = $tBrowser->post($g_hConfigOptions{gateway_url}, \%hGatewayParams);
+            my $iElapsed   = sprintf("%.2f", Time::HiRes::time() - $iStartTime);
+            debugLog(D_pageEngine, "PAGE " . $g_hUsers{$iCellNumber}->{name} . " ($iCellNumber) [" . $tResponse->code() . ($tResponse->code() == 200 ? '' : ".t$iTry") . " in $iElapsed]: $sMessage");
 
-        if (open(ERROR_LOG, ">>/tmp/dsps.gateway.error")) {
-            print ERROR_LOG localtime($g_iLastWakeTime) . " : to $iCellNumber received " . $tResponse->code() . "on try $iTry in $iElapsed seconds\n";
-            print ERROR_LOG $tResponse->content() . "\n-------------------------------------------------------\n\n";
-            close(ERROR_LOG);
+            last if ($tResponse->is_success);
+
+            if (open(ERROR_LOG, ">>/tmp/dsps.gateway.error")) {
+                print ERROR_LOG localtime($g_iLastWakeTime) . " : to $iCellNumber received " . $tResponse->code() . "on try $iTry in $iElapsed seconds\n";
+                print ERROR_LOG $tResponse->content() . "\n-------------------------------------------------------\n\n";
+                close(ERROR_LOG);
+            }
         }
 
         my $iWaitDuration = 300;
@@ -738,9 +748,15 @@ sub handlePagingCommands($$) {
 
                     # put the room in maintenancd mode
                     # note that we call findUsersRoom() again because it may have changed after processMentions()
-                    $g_hRooms{ DSPS_Room::findUsersRoom($iSender) }->{maintenance} = 1;
+                    my $iNewRoom = DSPS_Room::findUsersRoom($iSender);
+                    $g_hRooms{$iNewRoom}->{maintenance} = 1;
 
                     sendSystemMessageToRoom($iSender, S_NowInMaint, $iSilenceModifier);
+
+                    if (keys(%{$g_hRooms{$iNewRoom}->{occupants_by_phone}}) > 2) {
+                        sendSmsPage($iSender, t("Due to a previous conversation audience is now " . DSPS_Room::roomStatusIndividual($iNewRoom, 0, 1, 0, 0) . '.' . 
+                            (shouldTell($iSilenceModifier) ? '' : ' Due to the hour others were not notified of the :maint.')));
+                    }
                 }
                 else {
                     sendSmsPage($iSender, t("There's no default_maint user defined in the config.  Please specify a user via \":maint USER\""));
@@ -896,7 +912,7 @@ sub handlePagingCommands($$) {
                 }
             }
             else {
-                sendSmsPage($iSender, t(':noregex ' . S_NeedTime));
+                sendSmsPage($iSender, t(":noregex T /regex/\n" . S_NeedTime));
             }
 
             return 1;
@@ -1502,6 +1518,13 @@ sub processMentions($$$;$) {
         next if !$bIncludeSystemUsers && $g_hUsers{$iUserPhone}->{name} =~ /^\!/;
 
         if ($sScanMessage =~ /$sAt($g_hUsers{$iUserPhone}->{regex})\b/i) {
+
+                if (!DSPS_User::humanUsersPhone($sSender) && ($g_hUsers{$iUserPhone}->{vacation_end} > $g_iLastWakeTime)) {
+                    debugLog(D_pageEngine | D_users,
+                        $g_hUsers{$iUserPhone}->{name} . " excluded due to active vacation through " . prettyDateTime($g_hUsers{$iUserPhone}->{vacation_end}));
+                    next;
+                }
+
             debugLog(D_pageEngine, "found mention of user " . $g_hUsers{$iUserPhone}->{name} . " ($iUserPhone)");
             $bRoomChanged = DSPS_Room::combinePeoplesRooms($g_hUsers{$sSender}, $g_hUsers{$iUserPhone}) || $bRoomChanged;
             $bFoundSomeone = 1;
@@ -2138,7 +2161,7 @@ sub daemonMain() {
                                 ($bAuthOk eq 1 ? "" : $bAuthOk ? "[Auth $bAuthOk] " : "[Auth FAILED] ")
                               . $oRequest->uri->path
                               . ' request from '
-                              . $oConnection->peerhost() . ':'
+                              . ($oConnection->peerhost() eq '127.0.0.1' && $oRequest->header('X-Forwarded-For') ? $oRequest->header('X-Forwarded-For') : $oConnection->peerhost()) . ':'
                               . $oConnection->peerport()
                               . " specifying: "
                               . join(', ', sort keys %{$rVars}));
@@ -2146,8 +2169,10 @@ sub daemonMain() {
                         if ($bAuthOk) {
 
                             # look for submit requests - the majority of paging commands
-                            if ($oRequest->uri->path eq '/submit') {
+                            if (($oRequest->uri->path eq '/submit') || ($oRequest->uri->path eq '/noconfirmsubmit')) {
                                 if (defined($rVars->{message}) && defined($rVars->{sender})) {
+
+                                    $g_bNoConfirm = 1 if ($oRequest->uri->path eq '/noconfirmsubmit');
 
                                     if (defined($rVars->{fire_fast}) && ($rVars->{fire_fast} == 1)) {
 
@@ -2205,11 +2230,14 @@ sub daemonMain() {
                     $sException = $@;
 
                     if ($sException) {
+                        $g_bNoConfirm = 0;
                         infoLog("EXCEPTION (middle): $sException [caught & continuing]");
                         $oConnection->close() if ($oConnection);
                         sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected - exception in daemonMain (middle)\n\n$sException\n\ngrep dsps /var/log/syslog\n");
                     }
                 }
+
+                $g_bNoConfirm = 0;
 
                 # expire inactive rooms
                 DSPS_Room::roomsHealthCheck();
@@ -2227,6 +2255,7 @@ sub daemonMain() {
 
         if ($@) {
             my $sException = $@;
+            $g_bNoConfirm = 0;
             infoLog("EXCEPTION (outer): $sException");
             infoLog("restarting daemonMain");
             sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected - exception in daemonMain (outer)\n\n$sException\n\nDaemon auto-restarting.");
@@ -2264,7 +2293,7 @@ sub daemonAlreadyRunning() {
 sub showUsage() {
     print
 "dsps [-d | -s | -e | -i | -p escalation] [-c config_file] [-u user] [-x user] [message]\n   -d  (re)start the paging daemon in the background\n   -t  start the paging daemon in the foreground (for testing)\n   -s  submit a message (pipe to stdin or via CLI)\n";
-    print "   -e  submit an email (pipe to stdin or via CLI), i.e. ignore headers\n   -u  specify the submitting paging user\n   -p  print current oncall schedule for a given escalation\n";
+    print "   -e  submit an email (pipe to stdin or via CLI), i.e. ignore headers\n   -u  specify the submitting paging user\n   -n  no confirmation (suppressed all pages & emails for this submission)\n   -p  print current oncall schedule for a given escalation\n";
     print
 "   -f  fast message submission to the daemon; don't wait for processing\n   -c  specify a config filename (default /etc/dsps.conf)\n   -x  exclusive page user (ignore rooms & daemon)\n   -i  show current status (info)\n   -v  show current version\n   -ts run internal test suite\n   -m  show metrics\n   -h  show extra help\n";
     print "\nRoom log attributes:\n";
@@ -2385,6 +2414,7 @@ sub clientStartup() {
     my $bDebugTestSuite  = 0;
     my $bShowMetrics     = 0;
     my $bShowExtraHelp   = 0;
+    my $bNoConfirm       = 0;
     my $sUser            = '';
     my $sEscalation      = '';
     my $sExclusivePerson = '';
@@ -2395,6 +2425,7 @@ sub clientStartup() {
         's'        => \$bCmdSubmit,
         'e'        => \$bCmdSubmitEmail,
         'f'        => \$bFireFast,
+        'n'        => \$bNoConfirm,
         'x=s'      => \$sExclusivePerson,
         'i'        => \$bCmdStatus,
         'v'        => \$bVersion,
@@ -2531,10 +2562,10 @@ sub clientStartup() {
         # submit the message to the daemon
         if (defined($g_hConfigOptions{http_auth}) && ($g_hConfigOptions{http_auth} =~ /([A-Z0-9-_+]+)/i)) {
             my $sKey = $1;
-            print hitDspsApi('submit', [sender => $sUser, message => $sMessage, auth => $sKey, fire_fast => $bFireFast]);
+            print hitDspsApi($bNoConfirm ? 'noconfirmsubmit' : 'submit', [sender => $sUser, message => $sMessage, auth => $sKey, fire_fast => $bFireFast]);
         }
         else {
-            print hitDspsApi('submit', [sender => $sUser, message => $sMessage, fire_fast => $bFireFast]);
+            print hitDspsApi($bNoConfirm ? 'noconfirmsubmit' : 'submit', [sender => $sUser, message => $sMessage, fire_fast => $bFireFast]);
         }
         exit(0);
     }

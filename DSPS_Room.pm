@@ -484,7 +484,7 @@ sub roomsHealthCheck {
                 && !$g_hRooms{$iRoomNumber}->{sum_reminder_sent}) {
 
                 my @aReminderText = split('\s*\|\s*', main::getSummaryText());
-                main::sendCustomSystemMessageToRoom((keys(%{ $g_hRooms{$iRoomNumber}->{occupants_by_phone} }))[0], $aReminderText[int(rand($#aReminderText+1))], 0);
+                main::sendCustomSystemMessageToRoom((keys(%{ $g_hRooms{$iRoomNumber}->{occupants_by_phone} }))[0], $aReminderText[int(rand($#aReminderText+1))], 0, 1);
                 $g_hRooms{$iRoomNumber}->{sum_reminder_sent} = 1;
             }
 
@@ -492,7 +492,7 @@ sub roomsHealthCheck {
 
         # room expired
         if ($g_hRooms{$iRoomNumber}->{expiration_time} <= $main::g_iLastWakeTime) {
-            infoLog("room $iRoomNumber expired with " . keys(%{ $g_hRooms{$iRoomNumber}->{occupants_by_phone} }) . " occupants");
+            infoLog("room $iRoomNumber expired with " . keys(%{ $g_hRooms{$iRoomNumber}->{occupants_by_phone} }) . " occupants (" . roomStatusIndividual($iRoomNumber, 0, 1, 0, 0) . ')');
             logRoom($iRoomNumber);
             catalogRecentRoom($iRoomNumber);
             delete $g_hRooms{$iRoomNumber};

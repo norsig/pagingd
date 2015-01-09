@@ -12,10 +12,11 @@ use strict;
 use warnings;
 
 use base 'Exporter';
-our @EXPORT = ('%g_hConfigOptions');
+our @EXPORT = ('%g_hConfigOptions', '%g_hConfigVias');
 
 # set defaults
 our %g_hConfigOptions = ('require_at' => 0);
+our %g_hConfigVias;
 our $sConfigPath = '/etc';
 
 my @aValueDirectives = (
@@ -153,7 +154,8 @@ sub configSyntaxValid() {
         }
     }
 
-    if ($bAt) {
+    # sys lines checks
+    if ($bAt && $g_hConfigOptions{default_maint}) {
         foreach my $sReference (split(/[ ,;:]+/, $g_hConfigOptions{default_maint})) {
             unless ($sReference =~ /^\@/) {
                 print STDERR infoLog("WARNING: sys:default_maint includes $sReference without leading @ (with require_at:true)");
@@ -221,9 +223,16 @@ sub readConfig(;$) {
                 my $rUser = DSPS_User::createUser($aData[0], $aData[1], $aData[2], $sGroup, $aData[3]);
 
                 # user options
-                if (defined $aData[4]) {
+                if (defined $aData[4] && $aData[4]) {
                     if ($aData[4] =~ /redirect\s*:\s*(.*)/i) {
                         $rUser->{auto_include} = $1;
+                    }
+                    elsif ($aData[4] =~ /via\s*:\s*(.*)/i) {
+                        $rUser->{via} = $1;
+                    }
+                    else {
+                        print infoLog("configuration error - user has an invalid option: $sLine $sLineNum");
+                        ++$iErrors;
                     }
                 }
             }
@@ -366,6 +375,23 @@ sub readConfig(;$) {
                 print infoLog("configuration error - options not part of a valid alias or escalation: o:$iValue $sLineNum");
                 ++$iErrors;
             }
+            next;
+        }
+
+        # via definition
+        if (/\bvia\s*:\s*(\S+)\s*[,:;=\s]+(\S+)/i) {
+            my $sName = $1;
+            my $sValue = $2;
+            $sSection = '';
+
+            if ($sValue !~ /\./) {
+                print infoLog("configuration error - 'via' definition should be a valid email address domain $sLineNum");
+                ++$iErrors;
+            }
+            else {
+                $g_hConfigVias{$sName} = $sValue;
+            }
+
             next;
         }
 
