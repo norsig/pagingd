@@ -5,7 +5,7 @@
 #-#
 #-# DSPS (Digital Services Paging System) - Version 3
 #-#
-#-# Copyright (c) 2013 National Public Radio (Digital Services)
+#-# Copyright (c) 2011-2015 National Public Radio (Digital Services)
 #-#
 #-# Permission is hereby granted, free of charge, to any person obtaining a copy
 #-# of this software and associated documentation files (the "Software"), to deal
@@ -715,6 +715,11 @@ sub handlePagingCommands($$) {
             return 1;
         }
 
+        if ($sCommand eq ':nomaint') {
+            sendSmsPage($iSender, t("Unrecognized command.  Are you trying to :disband?"));
+            return 1;
+        }
+
         # set a maintenance window room
         if ($sCommand eq ':maint') {
             my $bRoomStatus = 0;
@@ -757,6 +762,8 @@ sub handlePagingCommands($$) {
                         sendSmsPage($iSender, t("Due to a previous conversation audience is now " . DSPS_Room::roomStatusIndividual($iNewRoom, 0, 1, 0, 0) . '.' . 
                             (shouldTell($iSilenceModifier) ? '' : ' Due to the hour others were not notified of the :maint.')));
                     }
+
+                    sendSmsPage($iSender, t("You can use :disband to terminate the room early."));
                 }
                 else {
                     sendSmsPage($iSender, t("There's no default_maint user defined in the config.  Please specify a user via \":maint USER\""));
@@ -1977,7 +1984,7 @@ sub processPageEngine($$) {
             $iRoom = DSPS_Room::findUsersRoom($iSender);
 
             # check for & potentially set broadcast mode
-            if ($sOrigMessage =~ /^\^(.*)/) {
+            if ($sOrigMessage =~ /^\^(.*)$/s) {
                 $sOrigMessage = $1;    # drop carret
 
                 if ($iRoom) {

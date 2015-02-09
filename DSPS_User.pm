@@ -277,7 +277,7 @@ sub blockedByFilter($$$) {
     }
 
     # FITLER:  Smart recoveries per user
-    # Smart recoveries means to let the recovery through if it during the day or [when night] if it's within 3 minutes
+    # Smart recoveries means to let the recovery through if it during the day or [when night] if it's within 5 minutes
     # of the last problem page
     if (   $sRecoveryRegex
         && ($g_hUsers{$iPhone}->{filter_recoveries} == 2)
