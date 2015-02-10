@@ -1567,8 +1567,6 @@ sub processMentions($$$;$) {
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub sendUserMessageToRoom($$$);
 
-
-
 sub sendUserMessageToRoom($$$) {
     my ($iSenderPhone, $sMessage, $bsUpdateAudience) = @_;
     my $sAmbiguousResult = '';
@@ -1614,16 +1612,21 @@ sub sendUserMessageToRoom($$$) {
     $g_hRooms{$iRoom}->{last_nonhuman_message} = $sMessage unless DSPS_User::humanUsersPhone($iSenderPhone);
 
     # determine the current audience
-    # bsUpdateAudience can be false, true, or an addition message to prefix the audience with
+    # bsUpdateAudience can be false, true, or an additional message to prefix the audience with
     my $sAudience =
       t(  ((length($bsUpdateAudience) > 1) ? $bsUpdateAudience . ' ' : ($g_hRooms{$iRoom}->{maintenance} ? 'MAINT:' : ''))
         . S_AudienceUpdate . ' '
           . DSPS_Room::roomStatus($iRoom)
           . ($g_hRooms{$iRoom}->{ticket_number} ? ('. Tkt: ' . $g_hRooms{$iRoom}->{ticket_number}) : ''));
 
-    # prepend the sender
-    $sMessage = $g_hUsers{$iSenderPhone}->{name} . ": $sMessage"
-      if DSPS_User::humanUsersPhone($iSenderPhone) && length($bsUpdateAudience) == 1;
+    # old logic: if DSPS_User::humanUsersPhone($iSenderPhone) && length($bsUpdateAudience) == 1;
+    if (DSPS_User::humanUsersPhone($iSenderPhone)) {
+        # prepend the sender
+        $sMessage = $g_hUsers{$iSenderPhone}->{name} . ": $sMessage"; 
+
+        # drop embedded carriage returns
+        $sMessage =~ s/\n//g;
+    }
 
     # update the room's history & expiration time
     push(@{ $g_hRooms{$iRoom}->{history} }, $sMessage);
@@ -1894,7 +1897,9 @@ sub processPageEngine($$) {
 
     my @aCommands;
     my $sCurrentCmd = '';
-    while ($sGivenMessage =~ /([^'"]+)|"([^"]*)"|'([^']*)'/mg) {
+    #while ($sGivenMessage =~ /([^'"]+)|"([^"]*)"|'([^']*)'/mg) {
+    $sGivenMessage =~ s/\?/\\?/g;   # escape question marks
+    while ($sGivenMessage =~ /([^"]+)|"([^"]*)"/mg) {
         if ($1) {
             my $sData = $1;
 
@@ -1906,9 +1911,13 @@ sub processPageEngine($$) {
             }
 
             if ($sData) {
-                $sCurrentCmd .= $sData;
+                if ($sGivenMessage =~ /$sCurrentCmd(['"])$sData/) {
+                    $sCurrentCmd .= $1 . $sData;
+                }
+                else {
+                    $sCurrentCmd .= $sData;  # should never hit this one
+                }
             }
-
         }
         else {
             $sCurrentCmd .= $2 ? $2 : $3;
@@ -1921,6 +1930,7 @@ sub processPageEngine($$) {
 
     # loop through multiple commands in a single page (separated by '\n' text)
     foreach my $sOrigMessage (@aCommands) {
+        $sOrigMessage =~ s/\\\?/?/g;  # unescape question marks
         my $sMessage = $sOrigMessage;
         my $bBypass  = ($sOrigMessage =~ /^\!/);
 
@@ -1996,7 +2006,7 @@ sub processPageEngine($$) {
                     else {
                         $g_hRooms{$iRoom}->{broadcast_speaker} = $iSender;
                         debugLog(D_pageEngine, "Room $iRoom set to broadcast mode via message from " . $g_hUsers{$iSender}->{name} . " ($iSender)");
-                        $bRoomChanged = "BROADCAST: replies only go to " . $g_hUsers{$iSender}->{name} . ';';
+                        $bRoomChanged = "BROADCAST:";
                     }
                 }
             }
