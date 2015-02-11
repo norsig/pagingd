@@ -1897,7 +1897,6 @@ sub processPageEngine($$) {
 
     my @aCommands;
     my $sCurrentCmd = '';
-    #while ($sGivenMessage =~ /([^'"]+)|"([^"]*)"|'([^']*)'/mg) {
     $sGivenMessage =~ s/\?/\\?/g;   # escape question marks
     while ($sGivenMessage =~ /([^"]+)|"([^"]*)"/mg) {
         if ($1) {
@@ -1920,7 +1919,13 @@ sub processPageEngine($$) {
             }
         }
         else {
-            $sCurrentCmd .= $2 ? $2 : $3;
+           my $sTemp = $2;
+            if (index($sTemp, "\\n") >= 0) {
+                $sCurrentCmd .= $sTemp;
+            }
+            else {
+                $sCurrentCmd .= '"' . $sTemp . '"';
+            }
         }
     }
 

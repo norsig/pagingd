@@ -18,6 +18,7 @@ our %hDefaultCmdPermission = (
     '?filters'    => 20,
     '?triggers'   => 20,
     '?recent'     => 35,
+    '?vacation'   => 20,
     ':email'      => 10,
     ':macro'      => 10,
     ':autoreply'  => 15,
