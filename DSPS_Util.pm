@@ -124,7 +124,7 @@ sub parseDateTime($$$$$) {
     $iNowMonth += 1;
 
     my ($iDd, $iDh, $iDm, $iDs) = Delta_DHMS($iNowYear, $iNowMonth, $iNowDay, $iNowHour, $iNowMin, 0, $iYear, $iMonth, $iDay, $iHour, $iMinute, 0);
-    my $iTotalSeconds = $iDd * 86400 + $iDh * 3600 + $iDm;
+    my $iTotalSeconds = $iDd * 86400 + $iDh * 3600 + $iDm * 60;
 
     my $sText = '';
     if ($iDd) {$sText = "$iDd day" . ($iDd > 1 ? 's' : '');}

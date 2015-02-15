@@ -2485,7 +2485,7 @@ sub showUserInfo(;$) {
     my $sUser = shift || '';
 
     if ($sUser) {
-        if ($g_hUsers{$sUser}->{filter_recoveries} || ($g_hUsers{$sUser}->{macros} && %{$g_hUsers{$sUser}->{macros}}) || $g_hUsers{$sUser}->{auto_reply_text} || $g_hUsers{$sUser}->{vacation_end}) {
+        if ($g_hUsers{$sUser}->{filter_recoveries} || ($g_hUsers{$sUser}->{macros} && %{$g_hUsers{$sUser}->{macros}}) || $g_hUsers{$sUser}->{auto_reply_text} || $g_hUsers{$sUser}->{vacation_end} || $g_hUsers{$sUser}->{staycation_end}) {
             print $g_hUsers{$sUser}->{name} . "\n";
             print ($g_hUsers{$sUser}->{filter_recoveries} == 1 ? "\t* No recoveries\n" : $g_hUsers{$sUser}->{filter_recoveries} == 2 ? "\t* Smart recoveries\n" : '');
             print ("\t* Auto Reply through " . prettyDateTime($g_hUsers{$sUser}->{auto_reply_expire}, 1) . ": " . $g_hUsers{$sUser}->{auto_reply_text} . "\n") if $g_hUsers{$sUser}->{auto_reply_expire};
