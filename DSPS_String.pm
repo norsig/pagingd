@@ -13,7 +13,7 @@ our @EXPORT = (
     'S_PullSyntax',       'S_SmartAlreadyF',  'S_SmartFiltered',   'E_SwapSuccess4',     'S_EmailSent1',        'S_NeedEmail',         'E_VacationSet2',      'E_VacationCancel1',
     'E_VacationElapsed1', 'S_HelpGeneral',    'S_HelpCommandsA',   'S_HelpCommandsB',    'S_HelpSyntax',        'C_MetricLog',         'S_NoSuchTrigger',     'S_AutoNagiosMute',
     'S_SummaryTooLate', 'E_EscalationPrep3', 'E_EscalationEsc4',   'S_VacaNeedTime',      'S_NoVacations',       'S_AmbiguousIgnored1', 'S_AmbiguousReject2',
-    'S_NoRecent', '@A_HelpTopics',
+    'S_NoRecent', '@A_HelpTopics', 'E_StaycationSet2', 'E_StaycationCancel1', 'E_StaycationElapsed1',
 );
 
 use constant S_NoPermission => "You don't have permission for this command.";
@@ -48,8 +48,8 @@ use constant S_NoEscalations     => "There are no escalations currently configur
 use constant S_NoSuchEntity      => "There's no group, alias, escalation or user by that name.";
 use constant S_EmailSent1        => "The room's history has been emailed to %%.";
 use constant S_NeedEmail         => "You need to specify a recipient's email address.  e.g. ':email ADDRESS'";
-use constant S_VacaNeedTime      => "The vacation command needs a time specified.  e.g. ':vacation 3d' or ':vacation 5/2/14 17:00'";
-use constant S_NoVacations       => "No one has currently configured vacation time.";
+use constant S_VacaNeedTime      => "The vacation/staycation commands needs a time specified.  e.g. ':vacation 3d' or ':vacation 5/2/14 17:00'";
+use constant S_NoVacations       => "No one has currently configured stay/vacation time.";
 use constant S_AmbiguousIgnored1 => "Ambiguous name reference '%%' ignored;  message was sent as is.";
 use constant S_AmbiguousReject2  => "%% is ambiguous.  Try %%.";
 use constant S_PullSyntax        => "Use ':pull NAMES' to pull users and/or groups into a new room with you, disbanding your previous room.";
@@ -72,6 +72,16 @@ use constant E_VacationCancel1 => "Subject: DSPS vacation time update\n\n"
 use constant E_VacationElapsed1 => "Subject: DSPS vacation time update\n\n"
   . "%%'s vacation time has elapsed and is now restored to all groups and escalations.\n\n"
   . "The '?vacation' paging command can be used to see everyone that currently has vacation days configured.\n";
+
+use constant E_StaycationSet2 => "Subject: DSPS staycation time update\n\n"
+  . "%% has set %% of staycation time and will be removed from all groups and escalations during sleeping hours.  You can still contact this person directly by name.\n\n"
+  . "The '?vacation' paging command can be used to see everyone that currently has stay/vacation days configured.\n";
+use constant E_StaycationCancel1 => "Subject: DSPS staycation time update\n\n"
+  . "%% has canceled their remaining staycation time and is now restored to all groups and escalations.\n\n"
+  . "The '?vacation' paging command can be used to see everyone that currently has stay/vacation days configured.\n";
+use constant E_StaycationElapsed1 => "Subject: DSPS staycation time update\n\n"
+  . "%%'s staycation time has elapsed and is now restored to all groups and escalations.\n\n"
+  . "The '?vacation' paging command can be used to see everyone that currently has stay/vacation days configured.\n";
 use constant E_EscalationPrep3 => "Subject: %%\n\n" . "[%%]\n\n%%";
 use constant E_EscalationEsc4  => "Subject: %%\n\n" . "[%%]\n\nThere was no reply from the on call person.  Escalating to:\n%%\n" . "\n%%";
 

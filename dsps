@@ -391,14 +391,29 @@ sub replaceUserMacros($$) {
     foreach my $sMacro (keys %hMacros) {
 
         if ($sMessage =~ /\b($sMacro)\b/i) {
-            $sMessage =~ s/\b($sMacro)\b/$hMacros{$sMacro}/gi;
-            $sCompressedMessage = $sMessage;
-            $sCompressedMessage =~ s/\n//g;
+            # if the macro replacement includes a caret let's assume it's intended to activate broadcast
+            # mode so instead of doing a staright replacement we're going to insert the new value at the beginning of the line
+            if ($hMacros{$sMacro} =~ /\^/) {
+                $sMessage =~ s/\b($sMacro)\b//gi;
+                $sMessage = $hMacros{$sMacro} . " $sMessage";
+            }
+            else {
+                $sMessage =~ s/\b($sMacro)\b/$hMacros{$sMacro}/gi;
+                $sCompressedMessage = $sMessage;
+                $sCompressedMessage =~ s/\n//g;
+            }
             infoLog("interpolated user's macro $sMacro");
         }
         elsif ($sCompressedMessage =~ /\b($sMacro)\b/i) {
-            $sCompressedMessage =~ s/\b($sMacro)\b/$hMacros{$sMacro}/gi;
-            $sMessage = $sCompressedMessage;
+            if ($hMacros{$sMacro} =~ /\^/) {
+                $sCompressedMessage =~ s/\b($sMacro)\b//gi;
+                $sCompressedMessage = $hMacros{$sMacro} . " $sCompressedMessage";
+                $sMessage = $sCompressedMessage;
+            }
+            else {
+                $sCompressedMessage =~ s/\b($sMacro)\b/$hMacros{$sMacro}/gi;
+                $sMessage = $sCompressedMessage;
+            }
             infoLog("interpolated compressed user's macro $sMacro");
         }
     }
@@ -937,12 +952,13 @@ sub handlePagingCommands($$) {
         }
 
         # show vacation time
-        if ($sCommand =~ /\?vaca/) {
+        if ($sCommand =~ /\?vaca/ || $sCommand =~ /\?stay/) {
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, '?vacation')) {
                 my %hVaca;
 
                 foreach my $iUser (keys %g_hUsers) {
-                    $hVaca{ $g_hUsers{$iUser}->{name} } = $g_hUsers{$iUser}->{vacation_end} if ($g_hUsers{$iUser}->{vacation_end} && $g_hUsers{$iUser}->{vacation_end} > $g_iLastWakeTime);
+                    $hVaca{ $g_hUsers{$iUser}->{name} . ' (V)'} = $g_hUsers{$iUser}->{vacation_end} if ($g_hUsers{$iUser}->{vacation_end} && $g_hUsers{$iUser}->{vacation_end} > $g_iLastWakeTime);
+                    $hVaca{ $g_hUsers{$iUser}->{name} . ' (S)'} = $g_hUsers{$iUser}->{staycation_end} if ($g_hUsers{$iUser}->{staycation_end} && $g_hUsers{$iUser}->{staycation_end} > $g_iLastWakeTime);
                 }
 
                 if (keys %hVaca) {
@@ -995,6 +1011,53 @@ sub handlePagingCommands($$) {
                         sendSmsPage($iSender, t("You have canceled your vacation setting."));
                         sendEmail(DSPS_Escalation::getUsersEscalationsEmails($iSender), $g_hConfigOptions{admin_email}, sv(E_VacationCancel1, $g_hUsers{$iSender}->{name}));
                         logPage($iSender, '', "canceled remaining vacation time");
+                    }
+                }
+            }
+            else {
+                sendSmsPage($iSender, t(S_VacaNeedTime));
+            }
+
+            return 1;
+        }
+
+        # set/update staycation time
+        if ($sCommand =~ /^:(?:no)*stay/) {
+            my ($iSeconds, $sTimeText);
+            $sParams = '0' if ($sCommand =~ /^:no/);
+
+            if (($sParams =~ /^\s*(\d+\w{0,1})\s*$/) || ($sParams =~ /(\d+)[-\/](\d+)[-\/](\d+)[\@: ]+(\d+):(\d+)/)) {
+
+                if ($3) {
+                    ($iSeconds, $sTimeText) = parseDateTime($1, $2, $3, $4, $5);
+                }
+                else {
+                    ($iSeconds, $sTimeText) = parseUserTime($1);
+                }
+
+                if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':vacation')) {
+                    if ($iSeconds) {
+                        if ($g_bTEST_RUN) {
+                            infoLog("Staycation time NOT actually set due to testing mode");
+                        }
+                        else {
+                            $g_hUsers{$iSender}->{staycation_end} = $g_iLastWakeTime + $iSeconds;
+                        }
+                        my $sReplyText = "You have successfully set $sTimeText of staycation time.";
+                        if ($iSeconds < 86400) {
+                            my ($iValue) = ($sTimeText =~ /(\d+)\s/);
+                            my $sS = $iValue > 1 ? 's' : '';
+                            $sReplyText .= "\nIf you meant to set $iValue day$sS or week$sS use a unit suffix like ${iValue}d or ${iValue}w.";
+                        }
+                        sendSmsPage($iSender, t($sReplyText));
+                        sendEmail(DSPS_Escalation::getUsersEscalationsEmails($iSender), $g_hConfigOptions{admin_email}, sv(E_StaycationSet2, $g_hUsers{$iSender}->{name}, $sTimeText));
+                        logPage($iSender, '', "set $sTimeText of staycation");
+                    }
+                    else {
+                        $g_hUsers{$iSender}->{staycation_end} = 0;
+                        sendSmsPage($iSender, t("You have canceled your staycation setting."));
+                        sendEmail(DSPS_Escalation::getUsersEscalationsEmails($iSender), $g_hConfigOptions{admin_email}, sv(E_StaycationCancel1, $g_hUsers{$iSender}->{name}));
+                        logPage($iSender, '', "canceled remaining staycation time");
                     }
                 }
             }
@@ -1514,6 +1577,12 @@ sub processMentions($$$;$) {
                     next;
                 }
 
+                if ($g_hUsers{$iUser}->{staycation_end} > $g_iLastWakeTime && !isDuringWakingHours()) {
+                    debugLog(D_pageEngine | D_users,
+                        $g_hUsers{$iUser}->{name} . " excluded from $sGroup due to active staycation through " . prettyDateTime($g_hUsers{$iUser}->{staycation_end}));
+                    next;
+                }
+
                 $bRoomChanged = DSPS_Room::combinePeoplesRooms($g_hUsers{$sSender}, $g_hUsers{$iUser}) || $bRoomChanged;
                 $bFoundSomeone = 1;
             }
@@ -1897,7 +1966,6 @@ sub processPageEngine($$) {
 
     my @aCommands;
     my $sCurrentCmd = '';
-    $sGivenMessage =~ s/\?/\\?/g;   # escape question marks
     while ($sGivenMessage =~ /([^"]+)|"([^"]*)"/mg) {
         if ($1) {
             my $sData = $1;
@@ -1910,12 +1978,7 @@ sub processPageEngine($$) {
             }
 
             if ($sData) {
-                if ($sGivenMessage =~ /$sCurrentCmd(['"])$sData/) {
-                    $sCurrentCmd .= $1 . $sData;
-                }
-                else {
-                    $sCurrentCmd .= $sData;  # should never hit this one
-                }
+                $sCurrentCmd .= $sData;
             }
         }
         else {
@@ -1935,7 +1998,6 @@ sub processPageEngine($$) {
 
     # loop through multiple commands in a single page (separated by '\n' text)
     foreach my $sOrigMessage (@aCommands) {
-        $sOrigMessage =~ s/\\\?/?/g;  # unescape question marks
         my $sMessage = $sOrigMessage;
         my $bBypass  = ($sOrigMessage =~ /^\!/);
 
@@ -2317,7 +2379,7 @@ sub showUsage() {
 "dsps [-d | -s | -e | -i | -p escalation] [-c config_file] [-u user] [-x user] [message]\n   -d  (re)start the paging daemon in the background\n   -t  start the paging daemon in the foreground (for testing)\n   -s  submit a message (pipe to stdin or via CLI)\n";
     print "   -e  submit an email (pipe to stdin or via CLI), i.e. ignore headers\n   -u  specify the submitting paging user\n   -n  no confirmation (suppressed all pages & emails for this submission)\n   -p  print current oncall schedule for a given escalation\n";
     print
-"   -f  fast message submission to the daemon; don't wait for processing\n   -c  specify a config filename (default /etc/dsps.conf)\n   -x  exclusive page user (ignore rooms & daemon)\n   -i  show current status (info)\n   -v  show current version\n   -ts run internal test suite\n   -m  show metrics\n   -h  show extra help\n";
+"   -f  fast message submission to the daemon; don't wait for processing\n   -c  specify a config filename (default /etc/dsps.conf)\n   -x  exclusive page user (ignore rooms & daemon)\n   -i  show current status (info)\n   -v  show current version\n   -ts run internal test suite\n   -m  show metrics\n   -h  show extra help\n   -j  dump user-specific info\n";
     print "\nRoom log attributes:\n";
     print "  [B] broadcast mode\n";
     print "  [M] maintenance mode\n";
@@ -2414,6 +2476,39 @@ sub exclusivePage($$) {
     }
 }
 
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Print out user-specific info
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+sub showUserInfo(;$);
+sub showUserInfo(;$) {
+    my $sUser = shift || '';
+
+    if ($sUser) {
+        if ($g_hUsers{$sUser}->{filter_recoveries} || ($g_hUsers{$sUser}->{macros} && %{$g_hUsers{$sUser}->{macros}}) || $g_hUsers{$sUser}->{auto_reply_text} || $g_hUsers{$sUser}->{vacation_end}) {
+            print $g_hUsers{$sUser}->{name} . "\n";
+            print ($g_hUsers{$sUser}->{filter_recoveries} == 1 ? "\t* No recoveries\n" : $g_hUsers{$sUser}->{filter_recoveries} == 2 ? "\t* Smart recoveries\n" : '');
+            print ("\t* Auto Reply through " . prettyDateTime($g_hUsers{$sUser}->{auto_reply_expire}, 1) . ": " . $g_hUsers{$sUser}->{auto_reply_text} . "\n") if $g_hUsers{$sUser}->{auto_reply_expire};
+            print ("\t* Vacation through " . prettyDateTime($g_hUsers{$sUser}->{vacation_end}, 1) . "\n") if $g_hUsers{$sUser}->{vacation_end};
+            print ("\t* Staycation through " . prettyDateTime($g_hUsers{$sUser}->{staycation_end}, 1) . "\n") if $g_hUsers{$sUser}->{staycation_end};
+            if ($g_hUsers{$sUser}->{macros}) {
+                my %hMacros = %{ $g_hUsers{$sUser}->{macros} };
+                print("\t* Macros:\n") if (keys %hMacros);
+                foreach my $sMacro (keys %hMacros) {
+                    print "\t\t\'" . $sMacro . "' => " . $hMacros{$sMacro} . "\n";
+                }
+            }
+        }
+    }
+    else {
+        print "Users with non-default configured options:\n";
+        foreach my $sUsr (sort { $g_hUsers{$a}->{name} cmp $g_hUsers{$b}->{name} } keys %g_hUsers) {
+            showUserInfo($sUsr);
+        }
+    }
+}
+
+
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # This is the main logic for the client part of
 # of DSPS (the companion to daemonMain()).
@@ -2437,6 +2532,7 @@ sub clientStartup() {
     my $bShowMetrics     = 0;
     my $bShowExtraHelp   = 0;
     my $bNoConfirm       = 0;
+    my $bUserInfo        = 0;
     my $sUser            = '';
     my $sEscalation      = '';
     my $sExclusivePerson = '';
@@ -2455,6 +2551,7 @@ sub clientStartup() {
         'h'        => \$bShowExtraHelp,
         'ts'       => \$bTestSuite,
         'tsd'      => \$bDebugTestSuite,
+        'j'       => \$bUserInfo,
         'config=s' => \$g_sConfigFilename,
         'user=s'   => \$sUser,
         'print=s'  => \$sEscalation
@@ -2481,6 +2578,13 @@ sub clientStartup() {
 
     if ($bShowExtraHelp) {
         showExtraHelp();
+        exit;
+    }
+
+    if ($bUserInfo) {
+        readValidConfigOrDie($g_sConfigFilename);
+        restoreState();
+        showUserInfo();
         exit;
     }
 
