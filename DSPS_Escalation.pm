@@ -168,9 +168,13 @@ sub getOncallPerson($;$) {
     # lookup the oncall person for this particular escalation.  if that person is currently
     # on vacation we'll look another week into the future.  at most we go 3 weeks out before
     # giving up and in that case returning the on-vacation person anyway.
+    #
+    # here we use staycation synonymously with vacation, with no care for the current time
+    # if you're on staycation you probably don't want to be on call
     do {
         $iPhone = getScheduledOncallPerson($sEscName, $iPlusDays + (++$iWeeks * 7));
-    } while (($g_hUsers{$iPhone}->{vacation_end} > ($main::g_iLastWakeTime + (ONEWEEK * $iWeeks))) && ($iWeeks < 2));
+    } while ((($g_hUsers{$iPhone}->{vacation_end} > ($main::g_iLastWakeTime + (ONEWEEK * $iWeeks))) ||
+              ($g_hUsers{$iPhone}->{staycation_end} > ($main::g_iLastWakeTime + (ONEWEEK * $iWeeks)))) && ($iWeeks < 2));
 
     return $iPhone;
 }

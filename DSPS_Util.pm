@@ -7,10 +7,13 @@ use DSPS_String;
 use Date::Calc qw(:all);
 
 use base 'Exporter';
-our @EXPORT = ('ONEWEEK', 'ROOM_LENGTH', 'parseUserTime', 'parseDateTime', 'isDuringWakingHours', 'prettyDateTime', 'prettyPhone', 'caselessHashLookup', 'parseRegex', 'dequote', 'prettyDuration');
+our @EXPORT = ('QUEUE_PAGE', 'PROCESS_QUEUE', 'ONEWEEK', 'ROOM_LENGTH', 'parseUserTime', 'parseDateTime', 'isDuringWakingHours', 'prettyDateTime', 'prettyPhone', 'caselessHashLookup', 'parseRegex', 'dequote', 'prettyDuration', 'filename');
 
 use constant ONEWEEK     => 604800;
 use constant ROOM_LENGTH => 3600;
+
+use constant QUEUE_PAGE  => 1;
+use constant PROCESS_QUEUE => 2;
 
 
 sub prettyDuration($;$) {
@@ -124,7 +127,7 @@ sub parseDateTime($$$$$) {
     $iNowMonth += 1;
 
     my ($iDd, $iDh, $iDm, $iDs) = Delta_DHMS($iNowYear, $iNowMonth, $iNowDay, $iNowHour, $iNowMin, 0, $iYear, $iMonth, $iDay, $iHour, $iMinute, 0);
-    my $iTotalSeconds = $iDd * 86400 + $iDh * 3600 + $iDm;
+    my $iTotalSeconds = $iDd * 86400 + $iDh * 3600 + $iDm * 60;
 
     my $sText = '';
     if ($iDd) {$sText = "$iDd day" . ($iDd > 1 ? 's' : '');}
@@ -146,5 +149,18 @@ sub caselessHashLookup($%) {
     return $hCaseless{$sGivenKey} if (defined $hCaseless{$sGivenKey});
     return '';
 }
+
+
+
+sub filename($) {
+    my $sFullPath = shift;
+
+    if ($sFullPath =~ m,([^/]*)$,) {
+        return $1;
+    }
+
+    return $sFullPath;
+}
+
 
 1;

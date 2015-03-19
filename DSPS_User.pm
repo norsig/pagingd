@@ -29,6 +29,7 @@ sub createUser {
         macros            => {},
         filter_recoveries => 0,
         vacation_end      => 0,
+        staycation_end    => 0,
         auto_reply_text   => '',
         auto_reply_expire => 0,
         throttle          => 0,
@@ -88,6 +89,7 @@ sub freezeState() {
     foreach my $iUser (keys %g_hUsers) {
         $hUserState{$iUser}->{filter_recoveries} = $g_hUsers{$iUser}->{filter_recoveries};
         $hUserState{$iUser}->{vacation_end}      = $g_hUsers{$iUser}->{vacation_end};
+        $hUserState{$iUser}->{staycation_end}    = $g_hUsers{$iUser}->{staycation_end};
         $hUserState{$iUser}->{auto_reply_text}   = $g_hUsers{$iUser}->{auto_reply_text};
         $hUserState{$iUser}->{auto_reply_expire} = $g_hUsers{$iUser}->{auto_reply_expire};
         $hUserState{$iUser}->{macros}            = $g_hUsers{$iUser}->{macros};
@@ -125,6 +127,7 @@ sub thawState($) {
         if (defined $g_hUsers{$iUser}) {
             $g_hUsers{$iUser}->{filter_recoveries} = $hUserState{$iUser}->{filter_recoveries};
             $g_hUsers{$iUser}->{vacation_end}      = $hUserState{$iUser}->{vacation_end};
+            $g_hUsers{$iUser}->{staycation_end}    = $hUserState{$iUser}->{staycation_end};
             $g_hUsers{$iUser}->{auto_reply_text}   = $hUserState{$iUser}->{auto_reply_text};
             $g_hUsers{$iUser}->{auto_reply_expire} = $hUserState{$iUser}->{auto_reply_expire};
             $g_hUsers{$iUser}->{macros}            = $hUserState{$iUser}->{macros};
@@ -213,6 +216,12 @@ sub usersHealthCheck() {
             debugLog(D_users, $g_hUsers{$iUser}->{name} . "'s vacation time has expired");
             main::sendEmail(main::getUsersEscalationsEmails($iUser), main::getAdminEmail(), sv(E_VacationElapsed1, $g_hUsers{$iUser}->{name}));
         }
+
+        if ($g_hUsers{$iUser}->{staycation_end} && ($g_hUsers{$iUser}->{staycation_end} <= $main::g_iLastWakeTime)) {
+            $g_hUsers{$iUser}->{staycation_end} = 0;
+            debugLog(D_users, $g_hUsers{$iUser}->{name} . "'s staycation time has expired");
+            main::sendEmail(main::getUsersEscalationsEmails($iUser), main::getAdminEmail(), sv(E_StaycationElapsed1, $g_hUsers{$iUser}->{name}));
+        }
     }
 
     # check for expired message cache entries every 6 hours
@@ -255,6 +264,7 @@ sub usersHealthCheck() {
         my $iAfterCount = keys %hDedupeByMessage;
         my $iDiff = $iBeforeCount - $iAfterCount;
         debugLog(D_users | D_pageEngine, "cleaned up deduping hash ($iDiff entr" . ($iDiff == 1 ? 'y' : 'ies') . " removed, $iAfterCount remaining)");
+        main::saveState();
     }
 }
 

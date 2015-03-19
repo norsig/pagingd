@@ -20,7 +20,7 @@ our %g_hConfigVias;
 our $sConfigPath = '/etc';
 
 my @aValueDirectives = (
-    'default_maint',  'gateway_url',   'gateway_params', 'fallback_email',       'nagios_recovery_regex', 'dsps_server',
+    'default_maint',  'gateway_url',   'gateway_params', 'gateway_auth', 'fallback_email',       'nagios_recovery_regex', 'dsps_server',
     'smtp_server',    'server_listen', 'smtp_from',      'admin_email',          'rt_connection',         'override_user',
     'override_regex', 'rt_link',       'log_rooms_to',   'nagios_problem_regex', 'http_auth', 'summary_text',
 );
