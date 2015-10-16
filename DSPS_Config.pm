@@ -1,6 +1,7 @@
 package DSPS_Config;
 
 use Hash::Case::Preserve;
+use Date::Parse;
 use DSPS_User;
 use DSPS_Room;
 use DSPS_Alias;
@@ -22,10 +23,10 @@ our $sConfigPath = '/etc';
 my @aValueDirectives = (
     'default_maint',  'gateway_url',   'gateway_params', 'gateway_auth', 'fallback_email',       'nagios_recovery_regex', 'dsps_server',
     'smtp_server',    'server_listen', 'smtp_from',      'admin_email',          'rt_connection',         'override_user',
-    'override_regex', 'rt_link',       'log_rooms_to',   'nagios_problem_regex', 'http_auth', 'summary_text',
+    'override_regex', 'rt_link',       'log_rooms_to',   'nagios_problem_regex', 'http_auth', 'summary_text', 'subst_regex',
 );
 my @aBoolDirectives = ('show_nonhuman', 'require_at', 'summary_reminder');
-my %hSeenAliases;
+tie my (%hSeenAliases), 'Hash::Case::Preserve';
 
 sub checkAliasRecursion($);
 
@@ -38,14 +39,16 @@ sub checkAliasRecursion($) {
     tie my (%hCaselessAliases), 'Hash::Case::Preserve';
     %hCaselessAliases = %g_hAliases;
 
-    while ($g_hAliases{$sAlias}->{referent} =~ m,(\w+),g) {
-        my $sThisReferent = $1;
+    if (defined $hCaselessAliases{$sAlias}) {
+        while ($hCaselessAliases{$sAlias}->{referent} =~ m,(\w+),g) {
+            my $sThisReferent = $1;
 
-        if (defined $hCaselessAliases{$sThisReferent}) {
-            return "$sThisReferent recursively used in $sAlias" if (defined $hSeenAliases{$sThisReferent});
+            if (defined $hCaselessAliases{$sThisReferent}) {
+                return "$sThisReferent recursively used in $sAlias" if (defined $hSeenAliases{$sThisReferent});
 
-            my $sError = checkAliasRecursion($sThisReferent);
-            return $sError if $sError;
+                my $sError = checkAliasRecursion($sThisReferent);
+                return $sError if $sError;
+            }
         }
     }
 
@@ -223,16 +226,32 @@ sub readConfig(;$) {
                 my $rUser = DSPS_User::createUser($aData[0], $aData[1], $aData[2], $sGroup, $aData[3]);
 
                 # user options
-                if (defined $aData[4] && $aData[4]) {
-                    if ($aData[4] =~ /redirect\s*:\s*(.*)/i) {
-                        $rUser->{auto_include} = $1;
-                    }
-                    elsif ($aData[4] =~ /via\s*:\s*(.*)/i) {
-                        $rUser->{via} = $1;
-                    }
-                    else {
-                        print infoLog("configuration error - user has an invalid option: $sLine $sLineNum");
-                        ++$iErrors;
+                if ($#aData > 3) {
+                    for my $iField (4 .. ($#aData)) {
+                        if (defined $aData[$iField] && $aData[$iField]) {
+                            if ($aData[$iField] =~ /redirect\s*:\s*(.*)/i) {
+                                $rUser->{auto_include} = $1;
+                            }
+                            elsif ($aData[$iField] =~ /via\s*:\s*(.*)/i) {
+                                $rUser->{via} = $1;
+                            }
+                            elsif ($aData[$iField] =~ /valid\s*:\s*(.*)/i) {
+                                if (my $iTime = str2time($1)) {
+                                    # the original config info will be a date which means we'll end up with epoch seconds
+                                    # equal to midnight at the *start* of the person's last valid day.  so they'll get
+                                    # taken out a day early.  let's push it back to 3pm that afternoon by adding 15 hours.
+                                    $rUser->{valid_end} = $iTime + 54000;
+                                }
+                                else {
+                                    print infoLog("configuration error - user has an invalid date for the 'valid' option: $sLine $sLineNum");
+                                    ++$iErrors;
+                                }
+                            }
+                            else {
+                                print infoLog("configuration error - user has an invalid option: $sLine $sLineNum");
+                                ++$iErrors;
+                            }
+                        }
                     }
                 }
             }
@@ -575,7 +594,7 @@ sub readConfig(;$) {
             next;
         }
 
-        # general configuration x: line
+        # general configuration sys: line
         if (/\b(?:sys|system)\s*:\s*([^:]+)\s*:\s*(.+)/i) {
             my $sOption = $1;
             my $sValue  = $2;

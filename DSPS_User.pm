@@ -33,6 +33,7 @@ sub createUser {
         auto_reply_text   => '',
         auto_reply_expire => 0,
         throttle          => 0,
+        valid_end         => 0,
     };
 
     $g_hUsers{ $_[2] } = $rhUser;
@@ -210,6 +211,8 @@ sub humanUsersPhone($) {
 
 sub usersHealthCheck() {
     # check for expired vacation time
+    # check for expired staycation time
+    # check for expired users
     foreach my $iUser (keys %g_hUsers) {
         if ($g_hUsers{$iUser}->{vacation_end} && ($g_hUsers{$iUser}->{vacation_end} <= $main::g_iLastWakeTime)) {
             $g_hUsers{$iUser}->{vacation_end} = 0;
@@ -221,6 +224,12 @@ sub usersHealthCheck() {
             $g_hUsers{$iUser}->{staycation_end} = 0;
             debugLog(D_users, $g_hUsers{$iUser}->{name} . "'s staycation time has expired");
             main::sendEmail(main::getUsersEscalationsEmails($iUser), main::getAdminEmail(), sv(E_StaycationElapsed1, $g_hUsers{$iUser}->{name}));
+        }
+
+        if ($g_hUsers{$iUser}->{valid_end} && ($g_hUsers{$iUser}->{valid_end} <= $main::g_iLastWakeTime)) {
+            debugLog(D_users, $g_hUsers{$iUser}->{name} . " is no longer valid; dropping from running config");
+            main::sendEmail(main::getAdminEmail(), '', sv(E_UserInvalidated1, $g_hUsers{$iUser}->{name}));
+            delete($g_hUsers{$iUser});
         }
     }
 
@@ -263,7 +272,7 @@ sub usersHealthCheck() {
 
         my $iAfterCount = keys %hDedupeByMessage;
         my $iDiff = $iBeforeCount - $iAfterCount;
-        debugLog(D_users | D_pageEngine, "cleaned up deduping hash ($iDiff entr" . ($iDiff == 1 ? 'y' : 'ies') . " removed, $iAfterCount remaining)");
+        debugLog(D_users | D_pageEngine, "cleaned up deduping hash ($iDiff entr" . ($iDiff == 1 ? 'y' : 'ies') . " removed, $iAfterCount remaining)") if ($iDiff || $iAfterCount);
         main::saveState();
     }
 }

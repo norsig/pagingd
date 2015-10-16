@@ -12,8 +12,8 @@ our @EXPORT = (
     'C_StatePath',        'S_AutoReplySyx',   'S_AutoReplySet1',   'S_AutoReplyRm',      'S_NoSuchEscalation1', 'S_NoEscalations',     'S_NoSuchEntity',      'S_NoSuchHelp',
     'S_PullSyntax',       'S_SmartAlreadyF',  'S_SmartFiltered',   'E_SwapSuccess4',     'S_EmailSent1',        'S_NeedEmail',         'E_VacationSet2',      'E_VacationCancel1',
     'E_VacationElapsed1', 'S_HelpGeneral',    'S_HelpCommandsA',   'S_HelpCommandsB',    'S_HelpSyntax',        'C_MetricLog',         'S_NoSuchTrigger',     'S_AutoNagiosMute',
-    'S_SummaryTooLate', 'E_EscalationPrep3', 'E_EscalationEsc4',   'S_VacaNeedTime',      'S_NoVacations',       'S_AmbiguousIgnored1', 'S_AmbiguousReject2',
-    'S_NoRecent', '@A_HelpTopics', 'E_StaycationSet2', 'E_StaycationCancel1', 'E_StaycationElapsed1',
+    'S_SummaryTooLate', 'E_EscalationPrep3', 'E_EscalationEsc4',   'S_VacaNeedTime',      'S_NoVacations',       'S_AmbiguousIgnored1', 'S_AmbiguousReject2', 'S_NoSuchUser',
+    'S_NoRecent', '@A_HelpTopics', 'E_StaycationSet2', 'E_StaycationCancel1', 'E_StaycationElapsed1', 'E_UserInvalidated1'
 );
 
 use constant S_NoPermission => "You don't have permission for this command.";
@@ -61,6 +61,7 @@ use constant S_HelpSyntax        => "?help TOPIC\nwhere topic can be a command, 
 use constant S_NoSuchTrigger     => "There are no triggers that match the name you provided.";
 use constant S_AutoNagiosMute    => "Massive slew of Nagios pages.  Auto-filtering Nagios for the next 30 minutes.  Original cause persists.";
 use constant S_SummaryTooLate    => "The previous conversation has already expired. It's too late to summarize.  You can try emailing it in.";
+use constant S_NoSuchUser        => "There are no users or groups that match the name you specified.";
 
 use constant E_SwapSuccess4 => "Subject: Oncall schedule change\n\n" . "%% has swapped weeks with %%.\n\n" . "The new schedule for %% is as follows:\n\n%%";
 use constant E_VacationSet2 => "Subject: DSPS vacation time update\n\n"
@@ -84,6 +85,11 @@ use constant E_StaycationElapsed1 => "Subject: DSPS staycation time update\n\n"
   . "The '?vacation' paging command can be used to see everyone that currently has stay/vacation days configured.\n";
 use constant E_EscalationPrep3 => "Subject: %%\n\n" . "[%%]\n\n%%";
 use constant E_EscalationEsc4  => "Subject: %%\n\n" . "[%%]\n\nThere was no reply from the on call person.  Escalating to:\n%%\n" . "\n%%";
+use constant E_UserInvalidated1 => "Subject: DSPS paging user automatically dropped\n\n" . "User %% has an end of life ('valid') date specified in the DSPS config file.\n"
+  . "That date has been reached and the user has been automatically dropped from the active running config.  You should take action:\n\n"
+  . "\tEither update the config to extend this user's date and restart DSPS.\n"
+  . "\tOr remove the user from the config and restart DSPS.\n\n"
+  . "If you don't the user will get pulled back in and re-removed every time the daemon restarts.";
 
 use constant C_PIDPath   => '/tmp/.dsps.pid';
 use constant C_StatePath => '/tmp/.dsps.state';

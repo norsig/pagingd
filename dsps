@@ -62,6 +62,8 @@ use DSPS_Version;
 use DSPS_Test;
 use strict;
 
+use constant MAX_PAGES_PER_CALL => 50;
+
 #-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Debugging is available on a per topic basis.  To include syslog debug detail simply
 # bitwise "OR" all the topics you want to see together in $g_iDebugTopics.  For example, to
@@ -268,7 +270,14 @@ sub sendEmail($$$) {
     return infoLog("Email suppressed due to NoConfirm command line option") if ($g_bNoConfirm);
 
     my $tSMTP = Net::SMTP->new($g_hConfigOptions{smtp_server});
-    $tSMTP->mail($sFrom);
+    eval {
+        $tSMTP->mail($sFrom);
+    };
+
+    if ($@) {
+        infoLog("EXCEPTION in sendEmail($sTo, $sCc, $sFrom, $sMessage), ignoring.");
+        return;
+    }
 
     if ($g_bTEST_RUN) {
         if ($g_hConfigOptions{admin_email}) {
@@ -398,7 +407,7 @@ sub replaceUserMacros($$) {
         if ($sMessage =~ /\b($sMacro)\b/i) {
 
             # if the macro replacement includes a caret let's assume it's intended to activate broadcast
-            # mode so instead of doing a staright replacement we're going to insert the new value at the beginning of the line
+            # mode so instead of doing a straight replacement we're going to insert the new value at the beginning of the line
             if ($hMacros{$sMacro} =~ /\^/) {
                 $sMessage =~ s/\b($sMacro)\b//gi;
                 $sMessage = $hMacros{$sMacro} . " $sMessage";
@@ -450,6 +459,17 @@ sub messagePostFixUp($) {
                 $sMessage = $sCompressedMessage;
                 infoLog("redacted hidden compressed alias '$sAlias'");
             }
+        }
+    }
+
+    # handle message substitions from config file
+    if (defined $g_hConfigOptions{subst_regex} && $g_hConfigOptions{subst_regex}) {
+        if ($g_hConfigOptions{subst_regex} =~ m,(.+)/(.+),) {
+            my $sRegex = $1;
+            my $sSubst = $2;
+            my $sOrigMessage = $sMessage;
+            $sMessage =~ s/$sRegex/$sSubst/s;
+            infoLog("subst_regex substituion: [$sOrigMessage] -> [$sMessage]") unless ($sOrigMessage eq $sMessage);
         }
     }
 
@@ -543,78 +563,97 @@ sub sendSmsPage($$;$) {
     # a large number of children and go out near simultaneously
     if (fork()) {    # parent
         @g_aOutgoingPageQueue = ();
-        return ;
+        return;
     }
 
     $0 = "dsps: " . ($iCommand == PROCESS_QUEUE ? 'queue' : 'page') . " submission process (perl) $g_sOriginalPath";
+    my $iLastSendDelay = 0;
 
-    # close the listening socket in the child
-    $g_tListenerSocket->close() if $g_tListenerSocket;    # socket not defined when called from exclusivePage()
+    eval {
+        while ($#g_aOutgoingPageQueue > -1) {
+        # close the listening socket in the child
+        $g_tListenerSocket->close() if $g_tListenerSocket;    # socket not defined when called from exclusivePage()
 
-    my $sFullJSON = '';
-    foreach my $rhItem (@g_aOutgoingPageQueue) {
-        $iCellNumber = $rhItem->{to};
-        $sMessage    = $rhItem->{message};
+        my $sFullJSON = '';
+        my $iLastPageIndex = $#g_aOutgoingPageQueue + 1 > MAX_PAGES_PER_CALL ? MAX_PAGES_PER_CALL - 1 : $#g_aOutgoingPageQueue;
 
-        if ($g_hUsers{$iCellNumber}->{via}) {
-            sendEmail($iCellNumber . '@' . $g_hConfigVias{ $g_hUsers{$iCellNumber}->{via} }, '', "\n\n" . $sMessage);
+        for my $iIdx (0 .. $iLastPageIndex) {
+            my $rhItem = $g_aOutgoingPageQueue[$iIdx];
+            $iCellNumber = $rhItem->{to};
+            $sMessage    = $rhItem->{message};
+
+            if ($g_hUsers{$iCellNumber}->{via}) {
+                sendEmail($iCellNumber . '@' . $g_hConfigVias{ $g_hUsers{$iCellNumber}->{via} }, '', "\n\n" . $sMessage);
+            }
+
+            # prepare the gateway API call POST parameters from our config options
+            my %hGatewayParams = ();
+            if (defined $g_hConfigOptions{gateway_params}) {
+                while ($g_hConfigOptions{gateway_params} =~ /\[([^ =\]\[]+)=([^ =\]\[]+)]/g) {
+                    my $sParam = $1;
+                    my $sValue = $2;
+
+                    $sValue =~ s/\$CELLNUMBER/1$iCellNumber/g;
+                    $sValue =~ s/\$MESSAGE/$sMessage/g;
+
+                    $hGatewayParams{$sParam} = $sValue;
+                }
+            }
+
+            $sFullJSON .= (length($sFullJSON) ? ',' : '') . encode_json(\%hGatewayParams);
         }
+        $sFullJSON = ('[' . $sFullJSON . ']') if ($iLastPageIndex > 0);
 
-        # prepare the gateway API call POST parameters from our config options
-        my %hGatewayParams = ();
-        if (defined $g_hConfigOptions{gateway_params}) {
-            while ($g_hConfigOptions{gateway_params} =~ /\[([^ =\]\[]+)=([^ =\]\[]+)]/g) {
-                my $sParam = $1;
-                my $sValue = $2;
+        my $tRequest = HTTP::Request->new(POST => $g_hConfigOptions{gateway_url});
+        $tRequest->content_type('application/json');
+        $tRequest->header('Authorization' => 'Basic ' . encode_base64($g_hConfigOptions{gateway_auth})) if (defined $g_hConfigOptions{gateway_auth});
+        $tRequest->content($sFullJSON);
 
-                $sValue =~ s/\$CELLNUMBER/1$iCellNumber/g;
-                $sValue =~ s/\$MESSAGE/$sMessage/g;
+        my $sJsonData;
+        my $iHTTPCode;
+        my $tJson;
 
-                $hGatewayParams{$sParam} = $sValue;
+        eval {
+            # send the page (perform POST)
+            ($iHTTPCode, $sJsonData) = sendRequestAsJSON($tRequest);
+            $tJson = ($iHTTPCode < 400 && length($sJsonData) > 5) ? decode_json($sJsonData) : '';
+        };
+
+        if ($@) {
+            infoLog("CAUGHT EXCEPTION DECODING (HTTP $iHTTPCode): $@; Json:: $sJsonData");
+            sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS issue - Caught exception decoding JSON\n\nResult: $@\n\nJson: $sJsonData");
+            die;
+        }
+        else {
+            if (ref($tJson) eq 'ARRAY') {
+                foreach my $tItem (@{$tJson}) {
+                    my $rhItem = shift @g_aOutgoingPageQueue;
+                    $sMessage = $rhItem->{message};
+                    debugLog(D_pageEngine, "(tot:" . ($iLastPageIndex + 1) . ") PAGE " . $rhItem->{to} . " --> " . ${$tItem}{result} . " (" . ${$tItem}{location} . ") {$sMessage}");
+                }
+            }
+            else {
+                my $rhItem = shift @g_aOutgoingPageQueue;
+                $sMessage = $rhItem->{message};
+                debugLog(D_pageEngine, "PAGE " . $rhItem->{to} . " --> HTTP $iHTTPCode (" . substr($rhItem->{message}, 0, 40) . ") {$sMessage}");
             }
         }
 
-        $sFullJSON .= (length($sFullJSON) ? ',' : '') . encode_json(\%hGatewayParams);
-    }
-    $sFullJSON = ('[' . $sFullJSON . ']') if ($#g_aOutgoingPageQueue > 0);
-
-    # because we fork all outgoing messages into child procs they finish at different times.
-    # there's no way to predict which will get to the user first.  we still can't guarantee but
-    # if we add a few seconds of sleep before audience update lines hopefully the actual messages
-    # will get there first and the audience updates second.
-    #sleep(4) if ($sMessage =~ /^.{0,5}((Audience is now)|(DSPS Trigger))/);
-
-
-    my $tRequest = HTTP::Request->new(POST => $g_hConfigOptions{gateway_url});
-
-    $tRequest->content_type('application/json');
-    $tRequest->header('Authorization' => 'Basic ' . encode_base64($g_hConfigOptions{gateway_auth})) if (defined $g_hConfigOptions{gateway_auth});
-    $tRequest->content($sFullJSON);
-
-    my $sJsonData;
-    my $iHTTPCode;
-    my $tJson;
-
-    eval {
-        # send the page (perform POST)
-        ($iHTTPCode, $sJsonData) = sendRequestAsJSON($tRequest);
-        $tJson = length($sJsonData) > 5 ? decode_json($sJsonData) : '';
+       if ($iHTTPCode >= 400) {
+            $iLastSendDelay = $iLastSendDelay ? $iLastSendDelay * 2 : 5;
+            debugLog(D_pageEngine, "last submission failed; setting delay to $iLastSendDelay seconds");
+            sleep($iLastSendDelay);
+            # this is kind of pointless. originally we were going to resend the pages after an increasing
+            # delay.  but here we've already shifted the data out of the array.  so we're sleeping but
+            # aren't really going to retry the failed ones.  should fix that one day.
+        }
+        }
+        sleep(1);
     };
 
     if ($@) {
-        infoLog("CAUGHT EXCEPTION DECODING (HTTP $iHTTPCode): $@; Json:: $sJsonData");
-    }
-    else {
-        if (ref($tJson) eq 'ARRAY') {
-            foreach my $tItem (@{$tJson}) {
-                my $rhItem = shift @g_aOutgoingPageQueue;
-                debugLog(D_pageEngine, "PAGE " . $rhItem->{to} . " --> " . ${$tItem}{result} . " (" . ${$tItem}{location} . ")");
-            }
-        }
-        else {
-            my $rhItem = shift @g_aOutgoingPageQueue;
-            debugLog(D_pageEngine, "PAGE " . $rhItem->{to} . " --> HTTP $iHTTPCode");
-        }
+        infoLog("CAUGHT EXCEPTION IN PAGE SUBMISSION: $@");
+        sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS issue - Caught exception in page submission\n\nResult: $@");
     }
 
     exit(0);    # child
@@ -640,10 +679,13 @@ sub sendRequestAsJSON($) {
         my $iElapsed = sprintf("%.2f", Time::HiRes::time() - $iStartTime);
 
         last if ($tResponse->is_success);
+        infoLog("ERROR: sendRequestAsJSON got HTTP $iResult ($sResult) from request " . $tRequest->content());
 
         if (open(ERROR_LOG, ">>/tmp/dsps.gateway.error")) {
             print ERROR_LOG localtime($g_iLastWakeTime) . " : received " . $tResponse->code() . " on try $iTry in $iElapsed seconds\n";
-            print ERROR_LOG $tResponse->content() . "\n-------------------------------------------------------\n\n";
+            print ERROR_LOG "Response: " . $tResponse->content() . "\n";
+            print ERROR_LOG "Request: " . $tRequest->content() . "\n";
+            print ERROR_LOG "-------------------------------------------------------\n\n";
             close(ERROR_LOG);
         }
 
@@ -663,7 +705,8 @@ sub sendRequestAsJSON($) {
         # has it been long enough since we last emailed about this error?
         if ($iLastMTime < $g_iLastWakeTime - $iWaitDuration) {
             if (defined($g_hConfigOptions{fallback_email}) && open(MAIL, "| /usr/sbin/sendmail " . $g_hConfigOptions{fallback_email})) {
-                print MAIL "DSPS can't send via gateway provider!\n\n";
+                print MAIL "DSPS can't send via gateway!\n";
+                print MAIL "Got HTTP $iResult: $sResult\n";
                 close(MAIL);
             }
 
@@ -807,7 +850,10 @@ sub handlePagingCommands($$) {
             my $bRoomStatus = 0;
 
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':maint')) {
-                my $sMaintUser = (defined($sParams) && $sParams) ? '@' . $sParams : (defined($g_hConfigOptions{default_maint}) && $g_hConfigOptions{default_maint}) ? '@' . $g_hConfigOptions{default_maint} : ''; 
+                my $sMaintUser =
+                    (defined($sParams)                         && $sParams)                         ? '@' . $sParams
+                  : (defined($g_hConfigOptions{default_maint}) && $g_hConfigOptions{default_maint}) ? '@' . $g_hConfigOptions{default_maint}
+                  :                                                                                   '';
                 if ($sMaintUser && (my $iUserCell = DSPS_User::matchUserByRegex($sMaintUser))) {
                     my $iUserRoom   = DSPS_Room::findUsersRoom($iUserCell);
                     my $iSenderRoom = DSPS_Room::findUsersRoom($iSender);
@@ -826,6 +872,7 @@ sub handlePagingCommands($$) {
 
                 # pull in the maint user(s)
                 $bRoomStatus = processMentions($iSender, $sMaintUser, $sMaintUser, 1);
+                debugLog(D_pageEngine, "$iSender attmpted to set maint with '$sMaintUser' resulting in $bRoomStatus");
 
                 if ($bRoomStatus) {
 
@@ -896,12 +943,25 @@ sub handlePagingCommands($$) {
                 my $iRoom = DSPS_Room::findUsersRoom($iSender);
 
                 if ($iRoom) {
-                    my @aRemovedUsers = processUnMentions($iRoom, $sParams);
-                    my $sText = join(', ', sort map { $g_hUsers{$_}->{name} } @aRemovedUsers);
-                    sendSystemMessageToRoom($iSender, "removed $sText from the room.", $iSilenceModifier);
+                    my @aRemovedUsers = processUnMentions($iRoom, $sParams, 1);
+                    if (scalar(@aRemovedUsers)) {
+                        my $sText = join(', ', sort map {$g_hUsers{$_}->{name}} @aRemovedUsers);
+                        sendSystemMessageToRoom($iSender, "removed $sText from the room.", $iSilenceModifier);
 
-                    foreach (@aRemovedUsers) {
-                        sendSmsPage($_, t($g_hUsers{$iSender}->{name} . ' has removed you from the room likely to save you from pointless chatter.  Reply with @' . $g_hUsers{$iSender}->{name} . ' if you really want to re-join.'), QUEUE_PAGE);
+                        foreach (@aRemovedUsers) {
+                            sendSmsPage($_, t($g_hUsers{$iSender}->{name}
+                                  . ' has removed you from the room likely to save you from pointless chatter.  Reply with @'
+                                  . $g_hUsers{$iSender}->{name} . ' if you really want to re-join.'), QUEUE_PAGE
+                            );
+                        }
+
+                        if (!DSPS_Room::roomHumanCount($iRoom)) {
+                            DSPS_Room::logRoom($iRoom);
+                            DSPS_Room::destroyRoom($iRoom);
+                        }
+                    }
+                    else  {
+                        sendSmsPage($iSender, t(S_NoSuchUser));
                     }
                 }
                 else {
@@ -1003,7 +1063,7 @@ sub handlePagingCommands($$) {
         # set/edit a regex filter
         if ($sCommand =~ /^:((nore$)|(noreg))/) {
 
-            if ($sParams =~ /(\d+\w{0,1})\s+(.*)/) {
+            if ($sParams =~ /(\d+\w{0,1})\s+(.*?)\s*$/) {
                 my $sTime  = $1;
                 my $sRegex = parseRegex($2);
 
@@ -1620,11 +1680,12 @@ sub handlePagingCommands($$) {
 }
 
 
-sub processUnMentions($$);
-sub processUnMentions($$) {
-    my $iRoom          = shift;
-    my $sMessage       = shift;
-    my $sAt            = $g_hConfigOptions{require_at} ? '@' : '\b';
+sub processUnMentions($$;$);
+sub processUnMentions($$;$) {
+    my $iRoom    = shift;
+    my $sMessage = shift;
+    my $bIgnoreAt = shift || 0;
+    my $sAt      = !$bIgnoreAt && $g_hConfigOptions{require_at} ? '@' : '\b';
     my @aRemovedUsers;
 
     # look for alias mentions
@@ -1633,7 +1694,7 @@ sub processUnMentions($$) {
         if ($sMessage =~ /$sAt($sAlias)\b/i) {
             debugLog(D_pageEngine, "found unmention of alias $sAlias");
             $sMessage =~ s/$sAt($sAlias)\b/$g_hAliases{$sAlias}->{referent}/gi;
-            @aRemovedUsers = (@aRemovedUsers, processUnMentions($iRoom, $sMessage));
+            @aRemovedUsers = (@aRemovedUsers, processUnMentions($iRoom, $sMessage, $bIgnoreAt));
         }
     }
 
@@ -1666,7 +1727,6 @@ sub processUnMentions($$) {
     return @aRemovedUsers;
 }
 
-
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Scan a message to see if anyone (people or
 # groups) needs to be pulled into the room and if
@@ -1679,15 +1739,14 @@ sub processUnMentions($$) {
 # Returns bool of whether or not the room makeup
 # changed.
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-sub processMentions($$$;$);
+sub processMentions($$$;$$);
 
-
-
-sub processMentions($$$;$) {
+sub processMentions($$$;$$) {
     my $sSender             = shift;
     my $sScanMessage        = shift;
     my $sRealMessage        = shift;
     my $bIncludeSystemUsers = shift || 0;
+    my $bIsAlias            = shift || 0;
     my $bRoomChanged        = 0;
     my $bFoundSomeone       = 0;
     my $sAt                 = $g_hConfigOptions{require_at} ? '@' : '\b';
@@ -1699,7 +1758,7 @@ sub processMentions($$$;$) {
             debugLog(D_pageEngine, "found mention of alias $sAlias");
             my $sOrigMessage = $sScanMessage;
             $sScanMessage =~ s/$sAt($sAlias)\b/$g_hAliases{$sAlias}->{referent}/gi;
-            $bRoomChanged  = (processMentions($sSender, $sScanMessage, $sRealMessage) > 0) || $bRoomChanged;
+            $bRoomChanged  = (processMentions($sSender, $sScanMessage, $sRealMessage, $bIncludeSystemUsers, 1) > 0) || $bRoomChanged;
             $sScanMessage  = $sOrigMessage;
             $bFoundSomeone = 1;
         }
@@ -1737,12 +1796,12 @@ sub processMentions($$$;$) {
 
         if ($sScanMessage =~ /$sAt($g_hUsers{$iUserPhone}->{regex})\b/i) {
 
-            if (!DSPS_User::humanUsersPhone($sSender) && ($g_hUsers{$iUserPhone}->{vacation_end} > $g_iLastWakeTime)) {
+            if ((!DSPS_User::humanUsersPhone($sSender) || $bIsAlias) && defined($g_hUsers{$iUserPhone}->{vacation_end}) && ($g_hUsers{$iUserPhone}->{vacation_end} > $g_iLastWakeTime)) {
                 debugLog(D_pageEngine | D_users, $g_hUsers{$iUserPhone}->{name} . " excluded due to active vacation through " . prettyDateTime($g_hUsers{$iUserPhone}->{vacation_end}));
                 next;
             }
 
-            if (!DSPS_User::humanUsersPhone($sSender) && ($g_hUsers{$iUserPhone}->{staycation_end} > $g_iLastWakeTime) && !isDuringWakingHours()) {
+            if ((!DSPS_User::humanUsersPhone($sSender) || $bIsAlias)  && defined($g_hUsers{$iUserPhone}->{staycation_end}) && ($g_hUsers{$iUserPhone}->{staycation_end} > $g_iLastWakeTime) && !isDuringWakingHours()) {
                 debugLog(D_pageEngine | D_users, $g_hUsers{$iUserPhone}->{name} . " excluded due to active staycation through " . prettyDateTime($g_hUsers{$iUserPhone}->{staycation_end}));
                 next;
             }
@@ -1781,18 +1840,16 @@ sub processMentions($$$;$) {
 #   - updating some room metadata that has to be done here
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub sendUserMessageToRoom($$$);
-
-
-
 sub sendUserMessageToRoom($$$) {
     my ($iSenderPhone, $sMessage, $bsUpdateAudience) = @_;
     my $sAmbiguousResult = '';
+    my $sAt = $g_hConfigOptions{require_at} ? '@' : '\b';
 
     # are there ambiguous names that we should warn the user about?
     # bypass if the message starts with a bang
-    unless ($sMessage =~ /^\s*\!/) {
+    unless (($sMessage =~ /^\s*\!/) || ($g_hUsers{$iSenderPhone}->{auto_include})) {
         foreach my $sAmbig (keys %g_hAmbigNames) {
-            if ($sMessage =~ /\b($sAmbig)\b/i) {
+            if ($sMessage =~ /$sAt($sAmbig)\b/i) {
                 $sAmbiguousResult = "$1;;;" . $g_hAmbigNames{$sAmbig};
                 last;
             }
@@ -1844,6 +1901,7 @@ sub sendUserMessageToRoom($$$) {
 
         # drop embedded carriage returns
         $sMessage =~ s/\n//g;
+        debugLog(D_pageEngine, "dropping carriage returns from $iSenderPhone message ($sMessage)");
     }
 
     # update the room's history & expiration time
@@ -1870,11 +1928,15 @@ sub sendUserMessageToRoom($$$) {
         # and either the sender has to also be human or if it's an automation sender then
         # it can't be blocked by this user's filters
         if (DSPS_User::humanUsersPhone($iUserPhone)
-            && (DSPS_User::humanUsersPhone($iSenderPhone) || !($sBlockReason = DSPS_User::blockedByFilter($iUserPhone, \$sMessage, $g_hRooms{$iRoom}->{last_problem_time})))) {
+            && (DSPS_User::humanUsersPhone($iSenderPhone) || !($sBlockReason = DSPS_User::blockedByFilter($iUserPhone, \$sMessage, $g_hRooms{$iRoom}->{last_problem_time}))))
+        {
 
-            if (!$g_hRooms{$iRoom}->{broadcast_speaker} ||                    # if we're in a broadcast room
+            if (
+                !$g_hRooms{$iRoom}->{broadcast_speaker} ||                    # if we're in a broadcast room
                 ($g_hRooms{$iRoom}->{broadcast_speaker} == $iUserPhone) ||    # message has to be TO bc owner
-                ($g_hRooms{$iRoom}->{broadcast_speaker} == $iSenderPhone)) {  # or FROM bc owner
+                ($g_hRooms{$iRoom}->{broadcast_speaker} == $iSenderPhone)
+              )
+            {                                                                 # or FROM bc owner
 
                 # the actual page - don't send to the sending user (no need to get your own message)
                 # UNLESS it's an auto reply.  then they probably want to know that it's still set
@@ -1971,7 +2033,8 @@ sub sendSystemMessageToRoom($$$) {
             #  1 (set by :command+), meaning always send the notification
             #  0 (set by :command), meaning send the notification based on it being during hours most people are awake
             # -1 (set by :command-), meaning never send the notification - e.g. only send it back to the person themself
-            sendSmsPage($iUserPhone, t(($iSender == $iUserPhone ? ('You have ' . (shouldTell($iSilenceModifier) ? '' : 'silently ')) : $g_hUsers{$iSender}->{name} . ' has ') . $sMessage), QUEUE_PAGE)
+            sendSmsPage($iUserPhone, t(($iSender == $iUserPhone ? ('You have ' . (shouldTell($iSilenceModifier) ? '' : 'silently ')) : $g_hUsers{$iSender}->{name} . ' has ') . $sMessage),
+                QUEUE_PAGE)
               if (shouldTell($iSilenceModifier) || ($iSender == $iUserPhone));
         }
     }
@@ -2149,6 +2212,8 @@ sub processPageEngine($$) {
 
     # loop through multiple commands in a single page (separated by '\n' text)
     foreach my $sOrigMessage (@aCommands) {
+        next if ($sOrigMessage =~ /^\s*$/);
+
         my $sMessage = $sOrigMessage;
         my $bBypass  = ($sOrigMessage =~ /^\!/);
 
@@ -2327,7 +2392,14 @@ sub daemonMain() {
                 checkpointMetrics();
 
                 # sleep at most 10 seconds waiting for a socket connection
+                $! = 0;
                 my ($rtReadSet) = IO::Select->select($rtReadHandles, undef, undef, 10);
+                if ($! eq 'Bad file descriptor') {
+                    infoLog("ERROR: bad file descriptor on listening socket; exiting from [$0]");
+                    sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected - bad file descriptor on listening socket\n\nProcess: $0\nIntentionally exiting.\n");
+                    exit(0);
+                }
+
                 $g_iLastWakeTime = time();
 
                 # loop through sockets that are ready to be read.  since we only keep our listening one open
@@ -2655,7 +2727,7 @@ sub showUserInfo(;$) {
                 my %hMacros = %{ $g_hUsers{$sUser}->{macros} };
                 print("\t* Macros:\n") if (keys %hMacros);
                 foreach my $sMacro (keys %hMacros) {
-                    print "\t\t\'" . $sMacro . "' => " . $hMacros{$sMacro} . "\n";
+                    print "\t\t\'" . $sMacro . "' => '" . $hMacros{$sMacro} . "'\n";
                 }
             }
         }

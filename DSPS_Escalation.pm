@@ -96,7 +96,7 @@ sub primeEscalation($$$) {
           . (main::getRTLink() ? main::getRTLink() . $g_hRooms{$iRoom}->{ticket_number} : '');
         my $sSubject = $g_hEscalations{$sEscName}->{alert_subject} ? $g_hEscalations{$sEscName}->{alert_subject} : 'DSPS Escalation!';
 
-        main::sendEmail($g_hEscalations{$sEscName}->{alert_email}, '', sv(E_EscalationPrep3, $sSubject, $sEscName, $sMessage) . ($g_hEscalations{$sEscName}->{rt_queue} ? $sRTSuffix : ''));
+        main::sendEmail($g_hEscalations{$sEscName}->{alert_email}, '', sv(E_EscalationPrep3, $sSubject, $sEscName, main::messagePostFixUp($sMessage)) . ($g_hEscalations{$sEscName}->{rt_queue} ? $sRTSuffix : ''));
     }
 
     debugLog(D_escalations,
@@ -333,7 +333,7 @@ sub checkEscalationTimes() {
             my $sSubject = ($g_hEscalations{$sOrigEscName}->{alert_subject} ? $g_hEscalations{$sOrigEscName}->{alert_subject} : 'DSPS Escalation!') . ' - ESCALATED!';
 
             main::sendEmail($g_hEscalations{$sOrigEscName}->{alert_email},
-                '', sv(E_EscalationEsc4, $sSubject, $sOrigEscName, $sOrigTo, $sLastMessage) . ($g_hEscalations{$sOrigEscName}->{rt_queue} ? $sRTSuffix : ''));
+                '', sv(E_EscalationEsc4, $sSubject, $sOrigEscName, $sOrigTo, main::messagePostFixUp($sLastMessage)) . ($g_hEscalations{$sOrigEscName}->{rt_queue} ? $sRTSuffix : ''));
 
         }
     }

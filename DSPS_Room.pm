@@ -378,7 +378,7 @@ sub roomStatusIndividual($;$$$$) {
                         foreach my $iPhone (keys %hGroupMembers) {
                             if (defined $g_hUsers{$iPhone}) {
                                 delete $hGroupMembers{$iPhone};
-                                $hGroupMembers{ $g_hUsers{$iPhone}->{name} } = 1 if (DSPS_User::humanUsersPhone($iPhone) || (!$bSquashSystemUsers && main::getShowNonHuman()));
+                                $hGroupMembers{ $g_hUsers{$iPhone}->{name} } = 1 if (DSPS_User::humanUsersPhone($iPhone) || ($bSquashSystemUsers == -1) || (!$bSquashSystemUsers && main::getShowNonHuman()));
                             }
                         }
 
@@ -400,7 +400,7 @@ sub roomStatusIndividual($;$$$$) {
                     # names have been removed one by one as we were checking them.  now we just have to add back the
                     # group name in their place.
                     $hRoomOccupants{$sGroup} = 1 if (DSPS_User::humanTest($sGroup)
-                        || (!$bSquashSystemUsers && main::getShowNonHuman()));    # human-based group actually
+                        || ($bSquashSystemUsers == -1) || (!$bSquashSystemUsers && main::getShowNonHuman()));    # human-based group actually
                 }
             }
         }
@@ -410,7 +410,7 @@ sub roomStatusIndividual($;$$$$) {
             if (defined $g_hUsers{$iPhone}) {
                 delete $hRoomOccupants{$iPhone};
                 $hRoomOccupants{ $g_hUsers{$iPhone}->{name} } = 1 if (DSPS_User::humanUsersPhone($iPhone)
-                    || (!$bSquashSystemUsers && main::getShowNonHuman()));
+                    || ($bSquashSystemUsers == -1) || (!$bSquashSystemUsers && main::getShowNonHuman()));
             }
         }
 
@@ -492,7 +492,7 @@ sub roomsHealthCheck {
 
         # room expired
         if ($g_hRooms{$iRoomNumber}->{expiration_time} <= $main::g_iLastWakeTime) {
-            infoLog("room $iRoomNumber expired with " . keys(%{ $g_hRooms{$iRoomNumber}->{occupants_by_phone} }) . " occupants (" . roomStatusIndividual($iRoomNumber, 0, 1, 0, 0) . ')');
+            infoLog("room $iRoomNumber expired with " . keys(%{ $g_hRooms{$iRoomNumber}->{occupants_by_phone} }) . " occupants (" . roomStatusIndividual($iRoomNumber, 0, -1, 0, 0) . ')');
             logRoom($iRoomNumber);
             catalogRecentRoom($iRoomNumber);
             delete $g_hRooms{$iRoomNumber};
