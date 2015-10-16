@@ -463,20 +463,19 @@ sub messagePostFixUp($) {
     }
 
     # handle message substitions from config file
-    if (defined $g_hConfigOptions{subst_regex} && $g_hConfigOptions{subst_regex}) {
-        if ($g_hConfigOptions{subst_regex} =~ m,(.+)/(.+),) {
-            my $sRegex = $1;
-            my $sSubst = $2;
+    if (defined $g_hConfigOptions{regex_subst} && $g_hConfigOptions{regex_subst}) {
+        foreach my $sRegex (reverse keys %{$g_hConfigOptions{regex_subst}}) {
+            my $sSubst = $g_hConfigOptions{regex_subst}{$sRegex};
             my $sOrigMessage = $sMessage;
             $sMessage =~ s/$sRegex/$sSubst/s;
-            infoLog("subst_regex substituion: [$sOrigMessage] -> [$sMessage]") unless ($sOrigMessage eq $sMessage);
+            infoLog("regex_subst substituion: [$sOrigMessage] -> [$sMessage]") unless ($sOrigMessage eq $sMessage);
         }
     }
 
     # remove multiples of spaces
-    $sMessage =~ s/\s{2,}/ /g;
-    $sMessage =~ s/^\s*//;
-    $sMessage =~ s/\s*$//;
+    $sMessage =~ s/ {2,}/ /g;
+    $sMessage =~ s/^ *//;
+    $sMessage =~ s/ *$//;
 
     return $sMessage;
 }
@@ -1353,7 +1352,7 @@ sub handlePagingCommands($$) {
                         my $iNewRoom = DSPS_Room::cloneRoomMinusOccupants($iOrigRoom);
                         DSPS_Room::destroyRoom($iOrigRoom);
                         DSPS_Room::roomEnsureOccupant($iNewRoom, $iSender);
-                        processMentions($iSender, $sParams, $sParams, 1);
+                        processMentions($iSender, $sParams, $sParams, 1, 0, 1);
 
                         my $sAudience =
                           S_AudienceUpdate . ' ' . DSPS_Room::roomStatus($iNewRoom) . ($g_hRooms{$iNewRoom}->{ticket_number} ? ('. Tkt: ' . $g_hRooms{$iNewRoom}->{ticket_number}) : '');
@@ -1739,17 +1738,18 @@ sub processUnMentions($$;$) {
 # Returns bool of whether or not the room makeup
 # changed.
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-sub processMentions($$$;$$);
+sub processMentions($$$;$$$);
 
-sub processMentions($$$;$$) {
+sub processMentions($$$;$$$) {
     my $sSender             = shift;
     my $sScanMessage        = shift;
     my $sRealMessage        = shift;
     my $bIncludeSystemUsers = shift || 0;
     my $bIsAlias            = shift || 0;
+    my $bIgnoreAt           = shift || 0;
     my $bRoomChanged        = 0;
     my $bFoundSomeone       = 0;
-    my $sAt                 = $g_hConfigOptions{require_at} ? '@' : '\b';
+    my $sAt                 = !$bIgnoreAt && $g_hConfigOptions{require_at} ? '@' : '\b';
 
     # look for alias mentions
     foreach my $sAlias (keys %g_hAliases) {
@@ -1930,7 +1930,6 @@ sub sendUserMessageToRoom($$$) {
         if (DSPS_User::humanUsersPhone($iUserPhone)
             && (DSPS_User::humanUsersPhone($iSenderPhone) || !($sBlockReason = DSPS_User::blockedByFilter($iUserPhone, \$sMessage, $g_hRooms{$iRoom}->{last_problem_time}))))
         {
-
             if (
                 !$g_hRooms{$iRoom}->{broadcast_speaker} ||                    # if we're in a broadcast room
                 ($g_hRooms{$iRoom}->{broadcast_speaker} == $iUserPhone) ||    # message has to be TO bc owner
