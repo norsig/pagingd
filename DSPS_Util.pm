@@ -7,13 +7,16 @@ use DSPS_String;
 use Date::Calc qw(:all);
 
 use base 'Exporter';
-our @EXPORT = ('QUEUE_PAGE', 'PROCESS_QUEUE', 'ONEWEEK', 'ROOM_LENGTH', 'parseUserTime', 'parseDateTime', 'isDuringWakingHours', 'prettyDateTime', 'prettyPhone', 'caselessHashLookup', 'parseRegex', 'dequote', 'prettyDuration', 'filename');
+our @EXPORT = ('SEND_IMMEDIATELY' , 'QUEUE_PAGE_FIRST', 'QUEUE_PAGE_LAST', 'PROCESS_QUEUE', 'ONEWEEK', 'ROOM_LENGTH', 'parseUserTime', 'parseDateTime', 'isDuringWakingHours',
+                'prettyDateTime', 'prettyPhone', 'caselessHashLookup', 'parseRegex', 'dequote', 'prettyDuration', 'filename');
 
 use constant ONEWEEK     => 604800;
 use constant ROOM_LENGTH => 3600;
 
-use constant QUEUE_PAGE  => 1;
-use constant PROCESS_QUEUE => 2;
+use constant SEND_IMMEDIATELY => 0;
+use constant QUEUE_PAGE_FIRST  => 1;
+use constant QUEUE_PAGE_LAST => 2;
+use constant PROCESS_QUEUE => 3;
 
 
 sub prettyDuration($;$) {
