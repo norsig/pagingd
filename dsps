@@ -404,29 +404,30 @@ sub replaceUserMacros($$) {
     my %hMacros = defined($g_hUsers{$iSender}->{macros}) ? %{ $g_hUsers{$iSender}->{macros} } : ();
     foreach my $sMacro (keys %hMacros) {
 
-        if ($sMessage =~ /\b($sMacro)\b/i) {
+        # \b doesn't work in any of these regexes if you allow the macro to contain punctuation like #foo
+        if ($sMessage =~ /(^|\s)($sMacro)($|\s)/i) {
 
             # if the macro replacement includes a caret let's assume it's intended to activate broadcast
             # mode so instead of doing a straight replacement we're going to insert the new value at the beginning of the line
             if ($hMacros{$sMacro} =~ /\^/) {
-                $sMessage =~ s/\b($sMacro)\b//gi;
+                $sMessage =~ s/(^|\s)($sMacro)($|\s)/$1$3/gi;
                 $sMessage = $hMacros{$sMacro} . " $sMessage";
             }
             else {
-                $sMessage =~ s/\b($sMacro)\b/$hMacros{$sMacro}/gi;
+                $sMessage =~ s/(^|\s)($sMacro)($|\s)/$1$hMacros{$sMacro}$3/gi;
                 $sCompressedMessage = $sMessage;
                 $sCompressedMessage =~ s/\n//g;
             }
             infoLog("interpolated user's macro $sMacro");
         }
-        elsif ($sCompressedMessage =~ /\b($sMacro)\b/i) {
+        elsif ($sCompressedMessage =~ /(^|\s)($sMacro)($|\s)/i) {
             if ($hMacros{$sMacro} =~ /\^/) {
-                $sCompressedMessage =~ s/\b($sMacro)\b//gi;
+                $sCompressedMessage =~ s/(^|\s)($sMacro)($|\s)/$1$3/gi;
                 $sCompressedMessage = $hMacros{$sMacro} . " $sCompressedMessage";
                 $sMessage           = $sCompressedMessage;
             }
             else {
-                $sCompressedMessage =~ s/\b($sMacro)\b/$hMacros{$sMacro}/gi;
+                $sCompressedMessage =~ s/(^|\s)($sMacro)($|\s)/$1$hMacros{$sMacro}$3/gi;
                 $sMessage = $sCompressedMessage;
             }
             infoLog("interpolated compressed user's macro $sMacro");
@@ -1268,7 +1269,7 @@ sub handlePagingCommands($$) {
         # add/update/delete a macro
         if ($sCommand eq ':macro') {
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':macro')) {
-                if ($sParams =~ /^(\w+)(?:\s+(.*))*/) {
+                if ($sParams =~ /^(\S+)(?:\s+(.*))*/) {
                     my $sNewMacroName = $1;
                     my $sNewMacroDef  = $2;
                     my %hMacros       = defined($g_hUsers{$iSender}->{macros}) ? %{ $g_hUsers{$iSender}->{macros} } : ();
@@ -2220,7 +2221,7 @@ sub processPageEngine($$) {
     # first we break the string into quoted vs non-quoted sections.  then we break the \n's
     # into separate commands provided they're in the non-quoted section.  for example:
     #        the big cow\nwould never "imagine there\nmight" be another option.
-    # that would be parsed ad the following separate commands:
+    # that would be parsed as the following separate commands:
     #   the big cow
     #   would never imagine there\nmight be another option
     # the embedded \n is preserved due to the quotes.
@@ -2270,7 +2271,9 @@ sub processPageEngine($$) {
         debugLog(D_pageEngine, "starting engine with iSender = $iSender, message = $sOrigMessage");
         my $iRoom = DSPS_Room::findUsersRoom($iSender);
 
-        # paging gateway companies insert random CRs that ruin our regexes
+        # paging gateway companies insert random CRs that ruin our regexes - let's drop them
+        # note: this drops literal CRs, not the string of a backslash followed by the letter n,
+        # as might be used in defining some macros.
         $sMessage =~ s/\n//g;
 
         # check for escalation cancel possibilities
