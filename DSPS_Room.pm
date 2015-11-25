@@ -75,6 +75,7 @@ sub catalogRecentRoom($) {
 }
 
 
+# customized sort to put humans before system users
 sub humanSort {
     my $bA = ($a =~ /^\!/);
     my $bB = ($b =~ /^\!/);

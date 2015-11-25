@@ -63,7 +63,7 @@ use DSPS_Version;
 use DSPS_Test;
 use strict;
 
-use constant MAX_PAGES_PER_CALL => 50;
+use constant MAX_PAGES_PER_CALL => 100;
 use constant LAST_GW_ERROR_FILE => '/tmp/.dsps.last_gw_error';
 
 #-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -2306,16 +2306,25 @@ sub processPageEngine($$) {
                         DSPS_Room::checkpointOccupants($iRoom) if $iRoom;
                         $bRoomChanged = (processMentions($iSender, $sMessage, $sOrigMessage) > 0) || $bRoomChanged;
 
+                        # special case logic:
+                        # if the original alert was from a non-human user (like nagios) AND
+                        # the current message is from a human AND
+                        # the current message has pulled more people into the room AND
+                        # the last time a 'problem' alert (i.e. nagios) was less than 2 minutes ago
+                        # then it's safe to assume someone is pulling someone else into a room to
+                        # have them help with a recent nagios alert.  that person will be pulled in
+                        # but won't necessarily know what's going on.  so let's resend the last 'problem'
+                        # message to everyone that just got pulled in.
+
                         # at this point $iRoom is the room the sender was in when this function started.  it may be 0 if the person wasn't in
                         # a room, even if the above processMention() has now put them in a room.  but if they weren't in a room at the start
                         # then there's no point in the below logic as there's no room history to search.  we also don't want to run this because
                         # it will instantiate a non-existent room (#0).  hence, "if ($iRoom)"
                         if ($iRoom && DSPS_User::humanUsersPhone($iSender) && $g_hRooms{$iRoom}->{last_nonhuman_message}) {
 
-                            if (   $g_hRooms{$iRoom}->{escalation_orig_sender}
+                            if ($g_hRooms{$iRoom}->{escalation_orig_sender}
                                 && !DSPS_User::humanUsersPhone($g_hRooms{$iRoom}->{escalation_orig_sender})
-                                && ($g_hRooms{$iRoom}->{last_problem_time} >= $g_iLastWakeTime - 120))
-                            {
+                                && ($g_hRooms{$iRoom}->{last_problem_time} >= $g_iLastWakeTime - 120)) {
 
                                 foreach my $iNewPhone (DSPS_Room::diffOccupants($iRoom)) {
                                     sendSmsPage($iNewPhone, 'RESEND: ' . $g_hRooms{$iRoom}->{last_nonhuman_message});
@@ -2745,8 +2754,18 @@ sub exclusivePage($$) {
     my $sMessage = shift;
 
     if ($sPerson && (my $sMatchingUser = DSPS_User::matchUserByRegex($sPerson))) {
-        infoLog("exclusively paging " . $g_hUsers{$sMatchingUser}->{name} . ": $sMessage");
-        sendSmsPage($sMatchingUser, '!> ' . $sMessage);
+
+        if ($sMessage  =~ /^limitTest(\d+)$/) {
+            my $iTotal = $1;
+            for my $iNum (1 .. $iTotal) {
+                sendSmsPage($sMatchingUser, "Test $iNum of $iTotal", QUEUE_PAGE_LAST);
+            }
+            sendSmsPage(0, 0, PROCESS_QUEUE);
+        }
+        else {
+            infoLog("exclusively paging " . $g_hUsers{$sMatchingUser}->{name} . ": $sMessage");
+            sendSmsPage($sMatchingUser, '!> ' . $sMessage);
+        }
     }
     else {
         print infoLog("no matching user found for '$sPerson'");
@@ -3016,7 +3035,22 @@ sub clientStartup() {
     }
 
     if ($bCmdDaemon || $bRunForeground) {
+        readValidConfigOrDie($g_sConfigFilename);
+
         if (my $iDaemonPID = daemonAlreadyRunning()) {
+
+            my $sRunningStatus;
+            if (defined($g_hConfigOptions{http_auth}) && ($g_hConfigOptions{http_auth} =~ /([A-Z0-9-_+]+)/i)) {
+                my $sKey = $1;
+                $sRunningStatus = hitDspsApi('status', [auth => $sKey]);
+            }
+            else {
+                $sRunningStatus = hitDspsApi('status', []);
+            }
+
+            if ($sRunningStatus =~ /CURRENT ROOM OCCUPANTS\n(.*)\n\n/) {
+                print "Active rooms destroyed by restart:\n$1\n" unless ($1 eq S_NoConversations);
+            }
 
             # request to startup in the background when a daemon is already running in the background
             if ($bCmdDaemon) {
@@ -3040,8 +3074,6 @@ sub clientStartup() {
                 }
             }
         }
-
-        readValidConfigOrDie($g_sConfigFilename);
 
         if ($bCmdDaemon) {
             my $tDaemon = Proc::Daemon->new(work_dir => '/tmp', pid_file => $g_sPIDPath);
