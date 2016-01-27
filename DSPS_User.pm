@@ -8,7 +8,7 @@ use strict;
 use warnings;
 
 use base 'Exporter';
-our @EXPORT = ('%g_hUsers', '%g_hAmbigNames');
+our @EXPORT = ('%g_hUsers', '%g_hAmbigNames', 'UID');
 
 our %g_hUsers;
 our %g_hAmbigNames;
@@ -204,9 +204,17 @@ sub humanTest($) {
 sub humanUsersPhone($) {
     my $iUser = shift;
 
-    return (defined $g_hUsers{$iUser} ? humanTest($g_hUsers{$iUser}->{name}) : 0);
+    # default to true if the user isn't defined -- for opt-in subscriptions we need
+    # to assume anyone not defined in dsps.conf is actually human (mostly)
+    return (defined $g_hUsers{$iUser} ? humanTest($g_hUsers{$iUser}->{name}) : 1);
 }
 
+
+sub UID($) {
+    my $iUser = shift;
+    
+    return (defined $g_hUsers{$iUser} ? $g_hUsers{$iUser}->{name} : $iUser);
+}
 
 
 sub usersHealthCheck() {

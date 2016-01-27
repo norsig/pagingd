@@ -11,9 +11,10 @@ our @EXPORT = (
     'S_NothingToSwap',    'S_NoRecipSwap1',   'S_SwapSyntax',      'S_NoSwapMatches1',   'S_MultipleMatches3',  'S_UnsharedSchedule2', 'S_ScheduleSwap1',     'C_PIDPath',
     'C_StatePath',        'S_AutoReplySyx',   'S_AutoReplySet1',   'S_AutoReplyRm',      'S_NoSuchEscalation1', 'S_NoEscalations',     'S_NoSuchEntity',      'S_NoSuchHelp',
     'S_PullSyntax',       'S_SmartAlreadyF',  'S_SmartFiltered',   'E_SwapSuccess4',     'S_EmailSent1',        'S_NeedEmail',         'E_VacationSet2',      'E_VacationCancel1',
-    'E_VacationElapsed1', 'S_HelpGeneral',    'S_HelpCommandsA',   'S_HelpCommandsB',    'S_HelpSyntax',        'C_MetricLog',         'S_NoSuchTrigger',     'S_AutoNagiosMute',
+    'E_VacationElapsed1', 'S_HelpGeneral',    'S_HelpCommandsA',   'S_HelpCommandsB',    'S_HelpSyntax',        'S_NoSuchTrigger',     'S_AutoNagiosMute',
     'S_SummaryTooLate', 'E_EscalationPrep3', 'E_EscalationEsc4',   'S_VacaNeedTime',      'S_NoVacations',       'S_AmbiguousIgnored1', 'S_AmbiguousReject2', 'S_NoSuchUser',
-    'S_NoRecent', '@A_HelpTopics', 'E_StaycationSet2', 'E_StaycationCancel1', 'E_StaycationElapsed1', 'E_UserInvalidated1'
+    'S_NoRecent', '@A_HelpTopics', 'E_StaycationSet2', 'E_StaycationCancel1', 'E_StaycationElapsed1', 'E_UserInvalidated1', 'S_AlreadySubscrbd1', 'S_SuccessSubscrbd1',
+    'S_AlreadyUnSub1', 'S_SuccessUnSub1', 'S_SuccessUnAll', 'S_SendSyntax', 'S_NoSuchSubList1', 'S_SubMsgSent1', 'S_SubMsgTooLong', 'S_SubMsgTooLong1', 'S_NoMembership'
 );
 
 use constant S_NoPermission => "You don't have permission for this command.";
@@ -62,6 +63,17 @@ use constant S_NoSuchTrigger     => "There are no triggers that match the name y
 use constant S_AutoNagiosMute    => "Massive slew of Nagios pages.  Auto-filtering Nagios for the next 30 minutes.  Original cause persists.";
 use constant S_SummaryTooLate    => "The previous conversation has already expired. It's too late to summarize.  You can try emailing it in.";
 use constant S_NoSuchUser        => "There are no users or groups that match the name you specified.";
+use constant S_AlreadySubscrbd1  => "You're already subscribed to the %% list.";
+use constant S_SuccessSubscrbd1  => "You've successfully subscribed to the %% list.";
+use constant S_AlreadyUnSub1     => "You aren't subscribed to the %% list.";
+use constant S_SuccessUnSub1     => "You've been successfully removed from the %% list.";
+use constant S_SuccessUnAll      => "You've been successfully removed from all subscription lists.";
+use constant S_SendSyntax        => "The send command requires a subscription list name and the outgoing message text, e.g. :sendc2 Hi C2 list.";
+use constant S_NoSuchSubList1    => "%% is not a currently configured subscription list.";
+use constant S_SubMsgSent1       => "Your message was successfully sent to the %% list.";
+use constant S_SubMsgTooLong     => 'Your message is 1 character too long. Please submit a shorter version.';
+use constant S_SubMsgTooLong1    => 'Your message is %% characters too long.  Please submit a shorter version.';
+use constant S_NoMembership      => "You aren't currently subscribed to any lists.";
 
 use constant E_SwapSuccess4 => "Subject: Oncall schedule change\n\n" . "%% has swapped weeks with %%.\n\n" . "The new schedule for %% is as follows:\n\n%%";
 use constant E_VacationSet2 => "Subject: DSPS vacation time update\n\n"
@@ -91,9 +103,8 @@ use constant E_UserInvalidated1 => "Subject: DSPS paging user automatically drop
   . "\tOr remove the user from the config and restart DSPS.\n\n"
   . "If you don't the user will get pulled back in and re-removed every time the daemon restarts.";
 
-use constant C_PIDPath   => '/tmp/.dsps.pid';
-use constant C_StatePath => '/tmp/.dsps.state';
-use constant C_MetricLog => '/tmp/dsps.metrics';
+use constant C_PIDPath   => '/tmp/.dsps.pid';  
+use constant C_StatePath => '/var/local/dsps';
 
 our @A_HelpTopics = (
     ":vacation T (set)\n" . "?vacation (query)",

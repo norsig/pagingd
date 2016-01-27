@@ -5,6 +5,7 @@
 #-#
 #-# DSPS (Digital Services Paging System) - Version 3
 #-#
+#-# LEGAL STUFF:
 #-# Copyright (c) 2011-2015 National Public Radio (Digital Services)
 #-#
 #-# Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -28,8 +29,42 @@
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 
-# this can be altered here or via the '-t' command-line argument
-our $g_bTEST_RUN = 0;
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#
+#-# OVERVIEW
+#-#
+#-# DSPS consists of both client and server/daemon code; both are in this same executable.
+#-#
+#-# Server/Damon:
+#-#     * typical linux daemon (runs detached)
+#-#     * maintains state
+#-#         * rooms/conversations
+#-#         * metrics
+#-#         * filters
+#-#         * etc
+#-#     * listens on the network socket for incoming messages/commands
+#-#
+#-# Client:
+#-#     * commandline interface
+#-#     * can be used to submit pages to the daemon (sends to network socket)
+#-#     * can be used to submit command to the daemon (sends to network socket)
+#-#
+#-# On a typical daemon startup (-d commandline switch) the client forks into the background,
+#-# the child becomes the daemon and detaches while the parent (the CLI) exits.  Some of the
+#-# main functions --good place to start getting familiar with the code-- are:
+#-#
+#-#     clientStartup() - main entry point for the CLI client
+#-#     daemonMain() - main entry point for the daemon immediately after forking
+#-#     hitDspsApi() - network function to send a message from the client to the daemon socket
+#-#
+#-# Parsing of the config file, user functions, room dynamics, escalation logic and other
+#-# specific functionality are defined in separate, external DSPS_* modules.
+#-# 
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+
+our $g_bTEST_RUN = 0;   # can be set via -t command line arg
 
 use Data::Dumper;
 use Proc::Daemon;
@@ -65,6 +100,7 @@ use strict;
 
 use constant MAX_PAGES_PER_CALL => 100;
 use constant LAST_GW_ERROR_FILE => '/tmp/.dsps.last_gw_error';
+
 
 #-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Debugging is available on a per topic basis.  To include syslog debug detail simply
@@ -112,9 +148,11 @@ my $g_bNoConfirm      = 0;
 our $g_iLastWakeTime = time();
 my $g_sPIDPath           = '';
 my @g_aOutgoingPageQueue = ();
+my %g_hSubscriptions;
 
 # these one-liners exist as functions so they can be called by some of the included modules
 # essentially these avoid circular include dependencies
+sub getAckRegex()                   {return parseRegex($g_hConfigOptions{nagios_acknowledgement_regex});}
 sub getRecoveryRegex()              {return parseRegex($g_hConfigOptions{nagios_recovery_regex});}
 sub getProblemRegex()               {return parseRegex($g_hConfigOptions{nagios_problem_regex});}
 sub getShowNonHuman()               {return $g_hConfigOptions{show_nonhuman};}
@@ -181,7 +219,7 @@ sub checkpointMetrics() {
 
     if ($iStartingDate) {
         if ($bForce || ($g_iTodayDate != $iStartingDate)) {
-            open(LOG, ">>" . C_MetricLog) || return (infoLog('Unable to write to ' . C_MetricLog));
+            open(LOG, ">>" . C_StatePath . "/dsps.metrics") || return (infoLog('Unable to write to ' . C_StatePath . '/dsps.metrics'));
             print LOG "$iStartingDate: $g_iNumPagesToday\n";
             close(LOG);
 
@@ -227,19 +265,19 @@ sub getServerAddress($$$) {
 # room occupants.
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub saveState() {
-    open(STATE, ">" . C_StatePath) || return infoLog('Unable to save state (need write access to ' . C_StatePath . ')');
+    open(STATE, ">" . C_StatePath . "/dsps.state") || return infoLog('Unable to save state (need write access to ' . C_StatePath . '/dsps.state)');
     print STATE DSPS_User::freezeState() . "\n";
     print STATE DSPS_SystemFilter::freezeState() . "\n";
     print STATE DSPS_User::freezeMessageState();
     close(STATE);
-    debugLog(D_state, "saved system state to " . C_StatePath);
+    debugLog(D_state, "saved system state to " . C_StatePath . "/dsps.state");
 }
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Read state data from a file
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub restoreState() {
-    open(STATE, C_StatePath) || return infoLog('No saved state to restore (' . C_StatePath . ')');
+    open(STATE, C_StatePath . "/dsps.state") || return infoLog('No saved state to restore (' . C_StatePath . '/dsps.state)');
     my $sUsers      = <STATE>;
     my $sSysFilters = <STATE>;
     my @aMessage    = <STATE>;
@@ -250,7 +288,25 @@ sub restoreState() {
     DSPS_User::thawState($sUsers);
     DSPS_User::thawMessageState(join('', @aMessage));
     DSPS_SystemFilter::thawState($sSysFilters);
-    debugLog(D_state, "restored system state from " . C_StatePath);
+    debugLog(D_state, "restored system state from " . C_StatePath . "/dsps.state");
+
+    # restore subscriptions to in-memory
+    if (opendir(my $hDir, C_StatePath)) { 
+        my @aSubFiles = grep { /^subscriptions\./ } readdir($hDir);
+        closedir($hDir);
+   
+        foreach my $sSubFile (@aSubFiles) {
+            if ($sSubFile =~ /subscriptions\.(.+)$/) {
+                my $sTag = uc($1);
+                if (open(SF, C_StatePath . "/$sSubFile")) {
+                    %{$g_hSubscriptions{$sTag}} = map {chomp($_); $_ => 1} <SF>;
+                }
+                else {
+                    infoLog("ERROR: unable to read/restore " . C_StatePath . "/$sSubFile"); 
+                }
+            }
+        }
+    }
 }
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -506,10 +562,11 @@ sub helpSearch($) {
 #   - interpolating config into gateway's API
 #   - logging result of the gateway API hit
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-sub sendSmsPage($$;$) {
+sub sendSmsPage($$;$$) {
     my $iCellNumber = shift;
     my $sMessage    = shift;
     my $iCommand    = shift || SEND_IMMEDIATELY;
+    my $bSubscription = shift || 0;
 
     # Notes aboue iCommand logic:
     # There are 3 commands - QUEUE_PAGE_FIRST, QUEUE_PAGE_LAST and PROCESS_QUEUE.  The idea is to allow
@@ -539,11 +596,11 @@ sub sendSmsPage($$;$) {
 
         # bail if testing
         if ($g_bTEST_RUN) {
-            infoLog("FAKE PAGE " . $g_hUsers{$iCellNumber}->{name} . " ($iCellNumber): $sMessage");
+            infoLog("FAKE PAGE " . UID($iCellNumber) . ": $sMessage");
             return;
         }
 
-        return infoLog("Page to " . $g_hUsers{$iCellNumber}->{name} . " suppressed due to NoConfirm command line option") if ($g_bNoConfirm);
+        return infoLog("Page to " . UID($iCellNumber) . " suppressed due to NoConfirm command line option") if ($g_bNoConfirm);
 
         # append a random character to make the message unique
         # (sms gateway companies often filter out dupes)
@@ -619,9 +676,17 @@ sub sendSmsPage($$;$) {
                 }
 
                 # prepare the gateway API call POST parameters from our config options
+                # we support two sets of gateway parameters from the config file: sys:gateway_params and sys:subscription_gateway_params
+                # if the subscription one is defined and we're called with $bSubscription as true, we use the subcription one.  otherwise
+                # we fallback to gateway_params (assuming it's defined).
+                # this is primarily so that someone can configure one outgoing phone number for regular text communications and another
+                # for subscription messages.
                 my %hGatewayParams = ();
-                if (defined $g_hConfigOptions{gateway_params}) {
-                    while ($g_hConfigOptions{gateway_params} =~ /\[([^ =\]\[]+)=([^ =\]\[]+)]/g) {
+                my $sGatewayParamConfig = ($bSubscription && defined($g_hConfigOptions{subscription_gateway_params})) ? $g_hConfigOptions{subscription_gateway_params} :
+                    defined($g_hConfigOptions{gateway_params}) ? $g_hConfigOptions{gateway_params} : '';
+
+                if ($sGatewayParamConfig) {
+                    while ($sGatewayParamConfig =~ /\[([^ =\]\[]+)=([^ =\]\[]+)]/g) {
                         my $sParam = $1;
                         my $sValue = $2;
 
@@ -664,7 +729,7 @@ sub sendSmsPage($$;$) {
                         if (defined(${$tItem}{result}) && ${$tItem}{result} && (${$tItem}{result} eq 'error')) {
                             if ($iLastSendDelay > 300) {
                                 infoLog("consistent errors submitting pages; giving up");
-                                die;
+                                die;  # in child
                             }
 
                             $iLastSendDelay = $iLastSendDelay ? $iLastSendDelay * 2 : 10;
@@ -675,13 +740,13 @@ sub sendSmsPage($$;$) {
 
                         my $rhItem = shift @g_aOutgoingPageQueue;
                         $sMessage = $rhItem->{message};
-                            debugLog(D_pageEngine, "(tot:" . ($iLastPageIndex + 1) . ") PAGE " . $rhItem->{to} . " --> " . ${$tItem}{result} . " (" . ${$tItem}{location} . ") {$sMessage}");
+                        debugLog(D_pageEngine, "(tot:" . ($iLastPageIndex + 1) . ") PAGE " . $rhItem->{to} . " --> " . ${$tItem}{result} . " (" . ${$tItem}{location} . ") {$sMessage}");
                     }
                 }
                 else {
                     my $rhItem = shift @g_aOutgoingPageQueue;
                     $sMessage = $rhItem->{message};
-                    debugLog(D_pageEngine, "PAGE " . $rhItem->{to} . " --> HTTP $iHTTPCode (" . substr($rhItem->{message}, 0, 40) . ") {$sMessage}");
+                    debugLog(D_pageEngine, "PAGE " . $rhItem->{to} . " -->  $iHTTPCode (" . substr($rhItem->{message}, 0, 40) . ") {$sMessage}");
                 }
             }
 
@@ -913,7 +978,7 @@ sub handlePagingCommands($$) {
 
                 # pull in the maint user(s)
                 $bRoomStatus = processMentions($iSender, $sMaintUser, $sMaintUser, 1);
-                debugLog(D_pageEngine, "$iSender attmpted to set maint with '$sMaintUser' resulting in $bRoomStatus");
+                debugLog(D_pageEngine, "$iSender attempted to set maint with '$sMaintUser' resulting in $bRoomStatus");
 
                 if ($bRoomStatus) {
                     # put the room in maintenancd mode
@@ -1011,9 +1076,52 @@ sub handlePagingCommands($$) {
                 else {
                     sendSmsPage($iSender, t(S_NotInRoom));
                 }
+
+                sendSmsPage(0, 0, PROCESS_QUEUE);
             }
 
-            sendSmsPage(0, 0, PROCESS_QUEUE);
+            return 1;
+        }
+
+        # send a blast out to a subscription list
+        if ($sCommand =~ /^:send([^ ]*)/) {
+            my $sSublist = $1;
+            if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':send')) {
+                if (defined($sParams) && $sParams) {
+                    unless ($sSublist) {
+                        ($sSublist, $sParams) = ($sParams =~ /^([^ ]+)\s+(.*)/);
+                    }
+                    $sSublist = uc($sSublist);
+                    my $sBlastText = $sParams;  # for clarity
+
+                    if (defined $g_hSubscriptions{$sSublist}) {
+                        my $sPrefix = defined($g_hConfigOptions{subscription_prefix}) ? $g_hConfigOptions{subscription_prefix}  . ' ': '';
+                        my $iMsgOverLen = length($sPrefix) + length($sBlastText) - 160;
+
+                        # message may be too long to send.  because this is a subscription message with
+                        # potentially lots of recipients, lets give the sender a chance to fix it.
+                        if ($iMsgOverLen > 0) {
+                            sendSmsPage($iSender, t($iMsgOverLen == 1 ? S_SubMsgTooLong : S_SubMsgTooLong1, $iMsgOverLen));
+                            return 1;
+                        }
+
+                        foreach my $iCell (keys %{$g_hSubscriptions{$sSublist}}) {
+                            sendSmsPage($iCell, $sPrefix . $sBlastText, QUEUE_PAGE_LAST);
+                        }
+                        sendSmsPage(0, 0, PROCESS_QUEUE, 1);  # "1" for send from alternate number (if configured)
+
+                        # provide a confirmation message to the sender if they're not on the subscription list themself
+                        sendSmsPage($iSender, t(S_SubMsgSent1, $sSublist)) unless $g_hSubscriptions{$sSublist}{$iSender};
+                    }
+                    else {
+                        sendSmsPage($iSender, t(S_NoSuchSubList1, $sSublist));
+                    }
+                }
+                else {
+                    sendSmsPage($iSender, t(S_SendSyntax));
+                }
+            }
+
             return 1;
         }
 
@@ -2206,11 +2314,23 @@ sub checkUserOverride($$) {
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub processPageEngine($$) {
     my ($sSender, $sGivenMessage) = @_;
-    my $iSender;
     my $bRoomChanged = 0;
 
-    # verify the sender;  note the below is assignment, not a test
-    return 'Unknown paging user.' unless ($iSender = verifySendingUser($sSender));
+    # verify the sender - either the page has to be from a configured user (dsps.conf)
+    # or it has to be an opt-in request for a subscription list (if so configured)
+    # opt-in/out commands are processed natively for non-users but require the
+    # command :join or :stop to be used by a configured user
+    my $iSender = verifySendingUser($sSender);
+    if (!$iSender || ($sGivenMessage =~ /^\s*[:\?]\s*(join|stop|list)/i)) {
+        if (handledOptInOut($iSender || $sSender, $sGivenMessage)) {
+            return 'Opt-In handled.';
+        }
+    }
+
+    unless ($iSender) {
+        debugLog(D_pageEngine, "dropping page from unknown user ($sSender): $sGivenMessage");
+        return 'Unknown paging user.' 
+    }
 
     # substitute in user macros unless it's a paging command or a bypass message
     $sGivenMessage = replaceUserMacros($iSender, $sGivenMessage) unless ($sGivenMessage =~ /^\s*[?:!]/);
@@ -2386,18 +2506,117 @@ sub verifySendingUser($) {
             $sSender = $sMatchingUser;
         }
         else {
-            infoLog("received message from unknown user ($sSender); ignoring");
+            debugLog(D_pageEngine, "received message from undefined user ($sSender)");
             return 0;
         }
     }
 
     unless (defined $g_hUsers{$sSender}) {
-        infoLog("received message from unknown user ($sSender); ignoring");
+        debugLog(D_pageEngine, "received message from undefined user ($sSender)");
         return 0;
     }
 
     return $sSender;    # now normalized as the user's phone number
 }
+
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# If subscription list opt-in is configured
+# see if the current message is an attempt to
+# subscribe to any list(s).  If so, handle all
+# of that processing.
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+sub handledOptInOut($$) {
+    my ($iSender, $sMessage) = @_;
+    my $bHandled = 0;
+    my $sPrefix = defined($g_hConfigOptions{subscription_prefix}) ? $g_hConfigOptions{subscription_prefix}  . ' ': '';
+
+    if ($sMessage =~ /\?\s*list/i) {
+        my @aLists;
+        foreach my $sSubName (keys %g_hSubscriptions) {
+            push(@aLists, $sSubName) if (defined $g_hSubscriptions{$sSubName}{$iSender});
+        }
+
+        if ($#aLists > -1) {
+            sendSmsPage($iSender, $sPrefix . "You are subscribed to the " . join(', ', @aLists) . " list" . ($#aLists == 0 ? '' : 's') . '.', SEND_IMMEDIATELY, 1);
+        }
+        else {
+            sendSmsPage($iSender, $sPrefix . S_NoMembership, SEND_IMMEDIATELY, 1);
+        }
+        return 1;
+    }
+
+    if (defined $g_hConfigOptions{subscriptions}) {
+        my ($bOptingOut, $sDetail) = ($sMessage =~ /(stop|quit|exit)\s*(.*)/i);
+
+        while ($g_hConfigOptions{subscriptions} =~ /([^\| ]+)/g) {
+            my $sTag = uc($1);
+            if ($sMessage =~ /\b$sTag\b/i) {
+                $bHandled = 1;
+                
+                # person is already subscribed to this list
+                if (defined $g_hSubscriptions{$sTag}{$iSender}) {
+                    if ($bOptingOut) {
+                        delete $g_hSubscriptions{$sTag}{$iSender};
+                        writeSubscriptionFile($sTag);
+                        sendSmsPage($iSender, $sPrefix . sv(S_SuccessUnSub1, $sTag), QUEUE_PAGE_LAST);
+                        infoLog("$iSender unsubscribed from list $sTag");
+                    }
+                    else {
+                        sendSmsPage($iSender, $sPrefix . sv(S_AlreadySubscrbd1, $sTag), QUEUE_PAGE_LAST);
+                    }
+                }
+                # not yet subscribed
+                else {
+                    if ($bOptingOut) {
+                        sendSmsPage($iSender, $sPrefix . sv(S_AlreadyUnSub1, $sTag), QUEUE_PAGE_LAST);
+                    }
+                    else {
+                        $g_hSubscriptions{$sTag}{$iSender} = 1;
+                        sendSmsPage($iSender, $sPrefix . sv(S_SuccessSubscrbd1, $sTag), QUEUE_PAGE_LAST);
+                        if (open(F, ">>" . C_StatePath . "/subscriptions.$sTag")) {
+                            print F "$iSender\n";
+                            close(F);
+                        }
+                        else {
+                            infoLog("ERROR: cannot write to " . C_StatePath . "/subscriptions.$sTag");
+                        }
+                        infoLog("$iSender subscribed to list $sTag");
+                    }
+                }
+            }
+            # someone can opt-out of a particular subscription (STOP CP), which is handled above
+            # or they can opt-out of everything (STOP). this case is the latter.
+            elsif ($bOptingOut && $sDetail =~ /^\s*$/) {
+                delete $g_hSubscriptions{$sTag}{$iSender};    
+            }
+        }
+
+        if ($bOptingOut && $sDetail =~ /^\s*$/) {
+            sendSmsPage($iSender, $sPrefix . S_SuccessUnAll, QUEUE_PAGE_LAST);
+        }
+
+        sendSmsPage(0, 0, PROCESS_QUEUE, 1);
+    }
+
+    return $bHandled;
+}
+
+
+sub writeSubscriptionFile($) {
+    my $sTag = uc(shift);
+
+    if (open(F, ">" . C_StatePath . "/subscriptions.$sTag")) {
+        foreach my $iNum (sort keys %{$g_hSubscriptions{$sTag}}) {
+            print F "$iNum\n";
+        }
+        close(F);
+    }
+    else {
+        infoLog("ERROR: unable to write to " . C_StatePath . "/subscriptions.$sTag");
+    }
+}
+
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # When the main daemon kicks off, immediately
@@ -2894,7 +3113,7 @@ sub clientStartup() {
     }
 
     if ($bShowMetrics) {
-        if (open(MET, C_MetricLog)) {
+        if (open(MET, C_StatePath . "/dsps.metrics")) {
             my $sDay      = '';
             my $iDayTotal = 0;
             while (<MET>) {
@@ -2913,7 +3132,7 @@ sub clientStartup() {
             print("Day $sDay, $iDayTotal page" . ($iDayTotal > 1 ? 's' : '') . "\n") if ($sDay && $iDayTotal);
         }
         else {
-            print "There are no available metrics (" . C_MetricLog . " not found).\n";
+            print "There are no available metrics (" . C_StatePath . "/dsps.metrics not found).\n";
         }
         exit;
     }
@@ -3073,6 +3292,12 @@ sub clientStartup() {
                     exit(1);
                 }
             }
+        }
+
+        # make sure our statepath dir exists
+        if ((! -d C_StatePath) && (!mkdir(C_StatePath))) {
+            print STDERR infoLog("ERROR: cannot create " . C_StatePath . " (needs to exist with owner 'nobody')");
+            exit(0);
         }
 
         if ($bCmdDaemon) {

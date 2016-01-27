@@ -244,8 +244,10 @@ sub checkEscalationCancel($$) {
     if ($iRoom && $g_hRooms{$iRoom}->{escalation_time}) {
 
         # we can cancel an escalation for this room if a human replied
-        # or nagios sent a recovery message
-        if (DSPS_User::humanUsersPhone($iSender) || (main::getRecoveryRegex() && $sMessage =~ main::getRecoveryRegex())) {
+        # or nagios sent a recovery/ack message
+        if (DSPS_User::humanUsersPhone($iSender) || 
+            (main::getRecoveryRegex() && $sMessage =~ main::getRecoveryRegex()) ||
+            (main::getAckRegex() && $sMessage =~ main::getAckRegex())) {
             my $sEscName = $g_hRooms{$iRoom}->{escalation_name};
 
             $g_hRooms{$iRoom}->{escalation_time} = 0;

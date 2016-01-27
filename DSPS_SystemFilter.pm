@@ -88,7 +88,7 @@ sub blockedByFilter($$) {
                 my $iMidnight = timelocal(0, 0, 0, $mday, $mon, $year);
                 my $iNowToday = $main::g_iLastWakeTime - $iMidnight;
 
-                debugLog(D_filters, "checking regex profile (/$sThisRegex/); now=$iNowToday, window=$iFrom-$iTill");
+                # debugLog(D_filters, "checking regex profile (/$sThisRegex/); now=$iNowToday, window=$iFrom-$iTill");
                 if (($iFrom < $iTill && $iNowToday >= $iFrom && $iNowToday <= $iTill) ||
                     ($iFrom > $iTill && ($iNowToday >= $iFrom || $iNowToday <= $iTill))) {
                     debugLog(D_filters, "message matched regex profile (/$sThisRegex/)");

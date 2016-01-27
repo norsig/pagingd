@@ -37,6 +37,7 @@ our %hDefaultCmdPermission = (
     ':nonagios'   => 50,
     ':noregex'    => 60,
     '^'           => 30,
+    ':send'       => 90,
 );
 
 

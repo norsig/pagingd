@@ -20,12 +20,39 @@ our %g_hConfigOptions = ('require_at' => 0);
 our %g_hConfigVias;
 our $sConfigPath = '/etc';
 
-my @aValueDirectives = (
-    'default_maint',  'gateway_url',   'gateway_params', 'gateway_auth', 'fallback_email',       'nagios_recovery_regex', 'dsps_server',
-    'smtp_server',    'server_listen', 'smtp_from',      'admin_email',          'rt_connection',         'override_user',
-    'override_regex', 'rt_link',       'log_rooms_to',   'nagios_problem_regex', 'http_auth', 'summary_text', 
+# these are the sys directives that can appear in the config file.
+# the ones with 0 hash values take values (strings).
+# the ones with 1 hash values take bools.
+my %hSysDirectives = (
+    'default_maint' => 0,
+    'gateway_url' => 0,
+    'gateway_params' => 0,
+    'gateway_auth' => 0,
+    'fallback_email' => 0,
+    'nagios_recovery_regex' => 0,
+    'dsps_server' => 0,
+    'smtp_server' => 0,
+    'server_listen' => 0,
+    'smtp_from' => 0,
+    'admin_email' => 0,
+    'rt_connection' => 0,
+    'override_user' => 0,
+    'subscription_prefix' => 0,
+    'override_regex'  => 0,
+    'rt_link' => 0,
+    'log_rooms_to'  => 0,
+    'nagios_problem_regex' => 0,
+    'nagios_acknowledgement_regex' => 0,
+    'http_auth' => 0,
+    'summary_text' => 0,
+    'subscriptions' => 0,
+    'subscription_gateway_params' => 0,
+
+    'show_nonhuman' => 1, 
+    'require_at' => 1, 
+    'summary_reminder' => 1
 );
-my @aBoolDirectives = ('show_nonhuman', 'require_at', 'summary_reminder');
+
 tie my (%hSeenAliases), 'Hash::Case::Preserve';
 
 sub checkAliasRecursion($);
@@ -599,19 +626,16 @@ sub readConfig(;$) {
             my $sOption = $1;
             my $sValue  = $2;
 
-            foreach my $sDirective (@aValueDirectives) {
-                if ($sOption =~ /$sDirective/i) {
-                    $sValue =~ s/^\s*\/(.*?)\/\s*$/$1/;
-                    $g_hConfigOptions{$sDirective} = $sValue;
-                    next LINE;
-                }
+            # these are bool directives
+            if (defined ($hSysDirectives{$sOption}) && $hSysDirectives{$sOption}) {
+                $g_hConfigOptions{$sOption} = ($sValue =~ /y|t|1|enable|on/i ? 1 : 0);
+                next LINE;
             }
-
-            foreach my $sDirective (@aBoolDirectives) {
-                if ($sOption =~ /$sDirective/i) {
-                    $g_hConfigOptions{$sDirective} = ($sValue =~ /y|t|1|enable|on/i ? 1 : 0);
-                    next LINE;
-                }
+            # these are value directives
+            elsif (defined ($hSysDirectives{$sOption})) {
+                $sValue =~ s/^\s*\/(.*?)\/\s*$/$1/;
+                $g_hConfigOptions{$sOption} = $sValue;
+                next LINE;
             }
         }
 
@@ -631,7 +655,7 @@ sub readConfig(;$) {
             next;
         }
 
-        print infoLog("configuration error - unknown directive: $_ $sLineNum");
+        print infoLog("configuration error - unknown directive: \"$_\" $sLineNum");
         ++$iErrors;
     }
 
