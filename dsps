@@ -409,6 +409,52 @@ sub rtCommand($;$) {
 }
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Create a case in Desk.com 
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+sub deskComCreateCase($$) {
+    my $sMessage = shift;
+    my $iPriority = shift;
+    my $sEmail = '';
+
+    if ($sMessage =~ /Email:\s*([^ ]+)$/im) {
+        $sEmail = $1;
+    }
+
+    $sMessage =~ s/\n/\\n/g;
+
+    if (defined $g_hConfigOptions{desk_url} && $g_hConfigOptions{desk_url}) {
+            my $tRequest = HTTP::Request->new(POST => $g_hConfigOptions{desk_url});
+            $tRequest->content_type('application/json');
+            $tRequest->header('Authorization' => 'Basic ' . encode_base64($g_hConfigOptions{desk_auth})) if (defined $g_hConfigOptions{desk_auth});
+            $tRequest->content('{"type":"email","subject":"ER Issue","priority":'.$iPriority.',"status":"open","message":{"direction": "in", "body": "'.$sMessage.'","to":"someone@desk.com","from":"'.$sEmail.'","subject":"ER Issue"}}');
+
+            my $sJsonData;
+            my $iHTTPCode;
+            my $tJson;
+
+            eval {
+                ($iHTTPCode, $sJsonData) = sendRequestAsJSON($tRequest);
+                $tJson = ($iHTTPCode < 400 && length($sJsonData) > 5) ? decode_json($sJsonData) : '';
+            };
+
+            if ($@) {
+                infoLog("CAUGHT EXCEPTION DECODING (HTTP $iHTTPCode): $@; Json:: $sJsonData");
+                sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS issue - Caught exception decoding JSON from desk.com\n\nResult: $@\n\nJson: $sJsonData");
+                die;
+            }
+            else {
+                if (ref($tJson) eq 'HASH') {
+                    if (defined ${$tJson}{id} && ${$tJson}{id}) {
+                        debugLog(D_pageEngine, "desk.com returned case #" . ${$tJson}{id});
+                        return ${$tJson}{id};
+                    }
+                }
+            }
+    }
+}
+
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Execute an external command.
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub forkExecCommand($) {
@@ -772,7 +818,7 @@ sub sendRequestAsJSON($) {
     my $sResult;
     my $iResult;
     my $tBrowser = LWP::UserAgent->new;
-    $tBrowser->timeout(10);
+    $tBrowser->timeout(15);
 
     my $iTry = 0;
     while ($iTry++ < 2) {
@@ -1495,7 +1541,6 @@ sub handlePagingCommands($$) {
         # pull occupants to a new room with sender
         if ($sCommand eq ':pull') {
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, ':pull')) {
-
                 if ($sParams) {
                     my $iOrigRoom = DSPS_Room::findUsersRoom($iSender);
 
@@ -2394,7 +2439,8 @@ sub processPageEngine($$) {
         # paging gateway companies insert random CRs that ruin our regexes - let's drop them
         # note: this drops literal CRs, not the string of a backslash followed by the letter n,
         # as might be used in defining some macros.
-        $sMessage =~ s/\n//g;
+        #$sMessage =~ s/\n//g;
+        # I don't think this is necessary (above) any longer.  Removing.
 
         # check for escalation cancel possibilities
         # if the escalation was canceled by a RECOVERY then we prefix the message with '-'

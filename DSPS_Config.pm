@@ -28,6 +28,8 @@ my %hSysDirectives = (
     'gateway_url' => 0,
     'gateway_params' => 0,
     'gateway_auth' => 0,
+    'desk_url' => 0,
+    'desk_auth' => 0,
     'fallback_email' => 0,
     'nagios_recovery_regex' => 0,
     'dsps_server' => 0,
@@ -411,6 +413,9 @@ sub readConfig(;$) {
                 }
                 elsif ($iValue =~ /rt_subject\s*[:=]*\s*(.*)/i) {
                     $rStruct->{rt_subject} = $1;
+                }
+                elsif ($iValue =~ /desk_priority\s*[:=]*\s*(.*)/i) {
+                    $rStruct->{desk_priority} = $1;
                 }
                 else {
                     print infoLog("configuration error - unrecognized escalation option: o:$iValue $sLineNum");

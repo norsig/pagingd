@@ -88,15 +88,24 @@ sub primeEscalation($$$) {
         );
     }
 
+    # do we need to create a Desk.com case?
+    if ($g_hEscalations{$sEscName}->{desk_priority}) {
+        $g_hRooms{$iRoom}->{ticket_number} = main::deskComCreateCase($sMessage, $g_hEscalations{$sEscName}->{desk_priority});
+    }
+
     # send out an alert email if configured
     if ($g_hEscalations{$sEscName}->{alert_email}) {
-        my $sRTSuffix =
-            "\n\n----\nThis event is being tracked in RT ticket #"
-          . $g_hRooms{$iRoom}->{ticket_number} . "\n"
-          . (main::getRTLink() ? main::getRTLink() . $g_hRooms{$iRoom}->{ticket_number} : '');
-        my $sSubject = $g_hEscalations{$sEscName}->{alert_subject} ? $g_hEscalations{$sEscName}->{alert_subject} : 'DSPS Escalation!';
+        my $sAlertSuffix = '';
 
-        main::sendEmail($g_hEscalations{$sEscName}->{alert_email}, '', sv(E_EscalationPrep3, $sSubject, $sEscName, main::messagePostFixUp($sMessage)) . ($g_hEscalations{$sEscName}->{rt_queue} ? $sRTSuffix : ''));
+        if ($g_hEscalations{$sEscName}->{rt_queue}) {
+            $sAlertSuffix = "\n\n----\nThis event is being tracked in RT ticket #" . $g_hRooms{$iRoom}->{ticket_number} . "\n" . (main::getRTLink() ? main::getRTLink() . $g_hRooms{$iRoom}->{ticket_number} : '');
+        }
+        elsif ($g_hEscalations{$sEscName}->{desk_priority}) {
+            $sAlertSuffix = "\n\n----\nThis event is being tracked in Desk.Com case #" . $g_hRooms{$iRoom}->{ticket_number} . "\n";
+        }
+
+        my $sSubject = $g_hEscalations{$sEscName}->{alert_subject} ? $g_hEscalations{$sEscName}->{alert_subject} : 'DSPS Escalation!';
+        main::sendEmail($g_hEscalations{$sEscName}->{alert_email}, '', sv(E_EscalationPrep3, $sSubject, $sEscName, main::messagePostFixUp($sMessage)) . $sAlertSuffix);
     }
 
     debugLog(D_escalations,

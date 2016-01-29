@@ -101,21 +101,26 @@ sub blockedByFilter($$) {
     # check for a previously seen message in a room with ack-mode enabled
     if ($iRoom && $g_hRooms{$iRoom}->{ack_mode}) {
         my $sGenericMessage = $sMessage;
-        $sGenericMessage =~ s/\bDate:\s.*$//s;
-        $sGenericMessage =~ s/HTTP OK:.*\d+ by.*$//s;
-        $sGenericMessage =~ s/([()])/\\$1/g;
+        $sGenericMessage =~ s/\bDate(\/Time)*:\s*.*$//s;    # wipe Date to end of message
+        $sGenericMessage =~ s/HTTP OK:.*\d+ by.*$//s;       # wipe HTTP OK to end of message
+        $sGenericMessage =~ s/([()])/\\$1/g;                # escape any parens
+        $sGenericMessage =~ s/\n|\r/ /g;                    # convert CR and tabs to spaces
+        $sGenericMessage =~ s/\s{2,}/ /g;                   # consolidate multiple spaces to a single one
 
-        debugLog(D_filters, "ack mode checking");
         foreach my $sPrevMsg (@{ $g_hRooms{$iRoom}->{history} }) {
-            debugLog(D_filters, "ack check [$sPrevMsg] against [$sGenericMessage]");
-            if ($sPrevMsg =~ /$sGenericMessage/) {
+            my $sLocalMsg = $sPrevMsg;
+            $sLocalMsg =~ s/\n|\r/ /g;                    # convert CR and tabs to spaces
+            $sLocalMsg =~ s/\s{2,}/ /g;                   # consolidate multiple spaces to a single one
+
+            # debugLog(D_filters, "ack check [$sLocalMsg] against [$sGenericMessage]");
+            if ($sLocalMsg =~ /$sGenericMessage/) {
                 debugLog(D_filters, "message matched previous in room's history (ack-mode)");
                 return "ackMode";
             }
         }
     }
 
-    # nothing matched
+    # nothing matched / nothing blocked
     return 0;
 }
 
