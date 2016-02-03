@@ -423,7 +423,7 @@ sub deskComCreateCase($$) {
     $sMessage =~ s/\n/\\n/g;
 
     if (defined $g_hConfigOptions{desk_url} && $g_hConfigOptions{desk_url}) {
-            my $tRequest = HTTP::Request->new(POST => $g_hConfigOptions{desk_url});
+            my $tRequest = HTTP::Request->new(POST => $g_hConfigOptions{desk_url} . '/api/v2/cases');
             $tRequest->content_type('application/json');
             $tRequest->header('Authorization' => 'Basic ' . encode_base64($g_hConfigOptions{desk_auth})) if (defined $g_hConfigOptions{desk_auth});
             $tRequest->content('{"type":"email","subject":"ER Issue","priority":'.$iPriority.',"status":"open","message":{"direction": "in", "body": "'.$sMessage.'","to":"someone@desk.com","from":"'.$sEmail.'","subject":"ER Issue"}}');
@@ -433,13 +433,13 @@ sub deskComCreateCase($$) {
             my $tJson;
 
             eval {
-                ($iHTTPCode, $sJsonData) = sendRequestAsJSON($tRequest);
+                ($iHTTPCode, $sJsonData) = sendRequestAsJSON($tRequest, 'deskCreateCase');
                 $tJson = ($iHTTPCode < 400 && length($sJsonData) > 5) ? decode_json($sJsonData) : '';
             };
 
             if ($@) {
                 infoLog("CAUGHT EXCEPTION DECODING (HTTP $iHTTPCode): $@; Json:: $sJsonData");
-                sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS issue - Caught exception decoding JSON from desk.com\n\nResult: $@\n\nJson: $sJsonData");
+                sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS issue - Caught exception decoding JSON from desk.com (create)\n\nResult: $@\n\nJson: $sJsonData");
                 die;
             }
             else {
@@ -451,6 +451,51 @@ sub deskComCreateCase($$) {
                 }
             }
     }
+
+    return 0;
+}
+
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Update a case in Desk.com -- add comment
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+sub deskComUpdateCase($$) {
+    my $iCaseNumber = shift;
+    my $sMessage = shift;
+
+    $sMessage =~ s/\n/\\n/g;
+
+    if (defined $g_hConfigOptions{desk_url} && $g_hConfigOptions{desk_url}) {
+            my $tRequest = HTTP::Request->new(POST => $g_hConfigOptions{desk_url} . "/api/v2/cases/$iCaseNumber/notes");
+            $tRequest->content_type('application/json');
+            $tRequest->header('Authorization' => 'Basic ' . encode_base64($g_hConfigOptions{desk_auth})) if (defined $g_hConfigOptions{desk_auth});
+            $tRequest->content('{"body":"' . $sMessage . '"}');
+
+            my $sJsonData;
+            my $iHTTPCode;
+            my $tJson;
+
+            eval {
+                ($iHTTPCode, $sJsonData) = sendRequestAsJSON($tRequest, 'deskCreateNote');
+                $tJson = ($iHTTPCode < 400 && length($sJsonData) > 5) ? decode_json($sJsonData) : '';
+            };
+
+            if ($@) {
+                infoLog("CAUGHT EXCEPTION DECODING (HTTP $iHTTPCode): $@; Json:: $sJsonData");
+                sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS issue - Caught exception decoding JSON from desk.com (note)\n\nResult: $@\n\nJson: $sJsonData");
+                die;
+            }
+            else {
+                if (ref($tJson) eq 'HASH') {
+                    if (defined ${$tJson}{updated_at} && ${$tJson}{updated_at}) {
+                        debugLog(D_pageEngine, "desk.com case $iCaseNumber note successfully updated at " . ${$tJson}{updated_at});
+                        return 1;
+                    }
+                }
+            }
+    }
+
+    return 0;
 }
 
 
@@ -759,7 +804,7 @@ sub sendSmsPage($$;$$) {
 
             eval {
                 # send the page (perform POST)
-                ($iHTTPCode, $sJsonData) = sendRequestAsJSON($tRequest);
+                ($iHTTPCode, $sJsonData) = sendRequestAsJSON($tRequest, 'sendOutgoingPage');
                 $tJson = ($iHTTPCode < 400 && length($sJsonData) > 5) ? decode_json($sJsonData) : '';
             };
 
@@ -813,8 +858,9 @@ sub sendSmsPage($$;$$) {
 
 
 
-sub sendRequestAsJSON($) {
+sub sendRequestAsJSON($;$) {
     my $tRequest = shift;
+    my $sLogId = shift || '';
     my $sResult;
     my $iResult;
     my $tBrowser = LWP::UserAgent->new;
@@ -831,7 +877,7 @@ sub sendRequestAsJSON($) {
         my $iElapsed = sprintf("%.2f", Time::HiRes::time() - $iStartTime);
 
         last if ($tResponse->is_success);
-        infoLog("ERROR: sendRequestAsJSON got HTTP $iResult ($sResult) from request " . $tRequest->content());
+        infoLog("ERROR: [$sLogId] sendRequestAsJSON got HTTP $iResult ($sResult) from request " . $tRequest->content());
 
         if (open(ERROR_LOG, ">>/tmp/dsps.gateway.error")) {
             print ERROR_LOG localtime($g_iLastWakeTime) . " : received " . $tResponse->code() . " on try $iTry in $iElapsed seconds\n";
@@ -858,7 +904,7 @@ sub sendRequestAsJSON($) {
         if ($iLastMTime < $g_iLastWakeTime - $iWaitDuration) {
             if (defined($g_hConfigOptions{fallback_email}) && open(MAIL, "| /usr/sbin/sendmail " . $g_hConfigOptions{fallback_email})) {
                 print MAIL "DSPS can't send via gateway!\n";
-                print MAIL "Got HTTP $iResult: $sResult\n";
+                print MAIL "[$sLogId] Got HTTP $iResult: $sResult\n";
                 close(MAIL);
             }
 
@@ -2109,7 +2155,7 @@ sub sendUserMessageToRoom($$$) {
         $sMessage = $g_hUsers{$iSenderPhone}->{name} . ": $sMessage";
 
         # drop embedded carriage returns
-        $sMessage =~ s/\n//g;
+        $sMessage =~ s/\n/ /g;
         debugLog(D_pageEngine, "dropping carriage returns from $iSenderPhone message ($sMessage)");
     }
 
@@ -2117,8 +2163,16 @@ sub sendUserMessageToRoom($$$) {
     push(@{ $g_hRooms{$iRoom}->{history} }, $sMessage);
     $g_hRooms{$iRoom}->{expiration_time} = $g_iLastWakeTime + ROOM_LENGTH;
 
-    # update the RT ticket if there is one, unless the user requests to bypass via a bang prefix
-    rtCommand("comment -m - " . $g_hRooms{$iRoom}->{ticket_number}, $sMessage) if ($g_hRooms{$iRoom}->{ticket_number} && !$bBypass);
+    # update the RT ticket or Desk.com case if there is one, unless the user requests to bypass via a bang prefix
+    # desk config trumps RT
+    if (defined $g_hRooms{$iRoom}->{ticket_number} && $g_hRooms{$iRoom}->{ticket_number} && !$bBypass) {
+        if (defined $g_hConfigOptions{desk_url} && defined $g_hConfigOptions{desk_url}) {
+            deskComUpdateCase($g_hRooms{$iRoom}->{ticket_number}, $sMessage);  
+        }
+        else {
+            rtCommand("comment -m - " . $g_hRooms{$iRoom}->{ticket_number}, $sMessage);
+        }
+    }
 
     # prepend a '+' if the message is going to escalate without a reply - i.e. an escalation is pending in the room
     $sMessage = '+' . $sMessage if (!DSPS_User::humanUsersPhone($iSenderPhone) && $g_hRooms{$iRoom}->{escalation_time} && ($sMessage !~ /^\+/));

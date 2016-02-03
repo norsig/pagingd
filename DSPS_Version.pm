@@ -5,6 +5,6 @@ use warnings;
 use base 'Exporter';
 our @EXPORT = ('$VERSION');
 
-our $VERSION = '3.1.45';
+our $VERSION = '3.1.47';
 
 1;

@@ -51,13 +51,13 @@ sub blockedByFilter($$) {
     my $iRoom    = shift;
 
     # check the recovery or system load filter
-    if (($iFilterRecoveryLoadTill > $main::g_iLastWakeTime) && ($sMessage =~ /(^[-+!]{0,1}RECOVERY)|(System Load)/)) {
+    if (($iFilterRecoveryLoadTill > $main::g_iLastWakeTime) && ($sMessage =~ /(^[-+!]{0,1}RECOVERY)|(System Load)/s)) {
         debugLog(D_filters, "message matched Recovery or Load filter");
         return "recovery/load";
     }
 
     # check the all nagios filter
-    if (($iFilterAllNagiosTill > $main::g_iLastWakeTime) && (($sMessage =~ /$g_hConfigOptions{nagios_problem_regex}/) || ($sMessage =~ /$g_hConfigOptions{nagios_recovery_regex}/))) {
+    if (($iFilterAllNagiosTill > $main::g_iLastWakeTime) && (($sMessage =~ /$g_hConfigOptions{nagios_problem_regex}/s) || ($sMessage =~ /$g_hConfigOptions{nagios_recovery_regex}/s))) {
         debugLog(D_filters, "message matched All Nagios filter");
         return "allNagios";
     }
@@ -66,7 +66,7 @@ sub blockedByFilter($$) {
     foreach my $iRegexFilterID (keys %rFilterRegex) {
         my $sThisRegex = $rFilterRegex{$iRegexFilterID}->{regex};
         $sThisRegex =~ s/(\\s| )/(\\s|)/g;  # to match randomly inserted newlines by the gateway provider
-        if (($rFilterRegex{$iRegexFilterID}->{till} >= $main::g_iLastWakeTime) && ($sMessage =~ /$sThisRegex/i)) {
+        if (($rFilterRegex{$iRegexFilterID}->{till} >= $main::g_iLastWakeTime) && ($sMessage =~ /$sThisRegex/is)) {
             debugLog(D_filters, "message matched Regex filter (" . $rFilterRegex{$iRegexFilterID}->{regex} . ")");
             return "regex";
         }
@@ -79,7 +79,7 @@ sub blockedByFilter($$) {
         foreach my $iRegexFilterID (keys %rFilterRegexProfile) {
             my $sThisRegex = $rFilterRegexProfile{$iRegexFilterID}->{regex};
             $sThisRegex =~ s/(\\s| )/(\\s|)/g;  # to match randomly inserted newlines by the gateway provider
-            if ($sMessage =~ /$sThisRegex/i) {
+            if ($sMessage =~ /$sThisRegex/is) {
                 my ($iFromHour, $iFromMin) = ($rFilterRegexProfile{$iRegexFilterID}->{from} =~ /(\d+):(\d+)/);
                 my ($iTillHour, $iTillMin) = ($rFilterRegexProfile{$iRegexFilterID}->{till} =~ /(\d+):(\d+)/);
                 my $iFrom = $iFromHour * 3600 + $iFromMin * 60;
