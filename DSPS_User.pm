@@ -236,6 +236,7 @@ sub usersHealthCheck() {
 
         if ($g_hUsers{$iUser}->{valid_end} && ($g_hUsers{$iUser}->{valid_end} <= $main::g_iLastWakeTime)) {
             debugLog(D_users, $g_hUsers{$iUser}->{name} . " is no longer valid; dropping from running config");
+            debugLog(D_pageEngine, "emailing about no-longer-valid user " . $g_hUsers{$iUser}->{name});
             main::sendEmail(main::getAdminEmail(), '', sv(E_UserInvalidated1, $g_hUsers{$iUser}->{name}));
             delete($g_hUsers{$iUser});
         }

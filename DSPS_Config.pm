@@ -252,12 +252,19 @@ sub readConfig(;$) {
                     next;
                 }
 
+                unless ($aData[3] =~ /^\s*\d+\s*$/) {
+                    print infoLog("configuration error - user " . $aData[0] . " (" . $aData[2] . ") doesn't have a valid (numeric) permission level $sLineNum");
+                    ++$iErrors;
+                    next;
+                }
+
                 my $rUser = DSPS_User::createUser($aData[0], $aData[1], $aData[2], $sGroup, $aData[3]);
 
                 # user options
                 if ($#aData > 3) {
                     for my $iField (4 .. ($#aData)) {
                         if (defined $aData[$iField] && $aData[$iField]) {
+
                             if ($aData[$iField] =~ /redirect\s*:\s*(.*)/i) {
                                 $rUser->{auto_include} = $1;
                             }
@@ -400,6 +407,9 @@ sub readConfig(;$) {
                     my $sAnOption = $1;
                     if ($sAnOption =~ /hidden/i) {
                         $rStruct->{hidden} = 1;
+                    }
+                    elsif ($sAnOption =~ /broadcast/i) {
+                        $rStruct->{broadcast} = 1;
                     }
                     else {
                         print infoLog("configuration error - unrecognized alias option: o:$sAnOption $sLineNum");

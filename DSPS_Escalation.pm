@@ -133,13 +133,13 @@ sub getScheduledOncallPerson($;$) {
     my $iToday = sprintf("%d%02d%02d", $iYear + 1900, $iMonth + 1, $iDay);
 
     my $iPersonPhone;
-    foreach (sort keys %hSchedule) {
+    foreach my $sSchedLineDate (sort keys %hSchedule) {
         my $iTodayPlus = $iPlusDays ? time2str("%Y%m%d", (str2time(substr($iToday, 0, 8)) + (86400 * $iPlusDays))) : $iToday;
 
-        if ($iTodayPlus >= $_) {
+        if ($iTodayPlus > $sSchedLineDate || ($iTodayPlus == $sSchedLineDate && $iHour >= 12)) {
 
-            if ($hSchedule{$_} =~ /^auto/i) {
-                my $sThisSched   = $hSchedule{$_};
+            if ($hSchedule{$sSchedLineDate} =~ /^auto/i) {
+                my $sThisSched   = $hSchedule{$sSchedLineDate};
                 my @aOnCallNames = ();
 
                 while ($sThisSched =~ m,(\w+),g) {
@@ -150,12 +150,13 @@ sub getScheduledOncallPerson($;$) {
                 }
                 return '' if ($#aOnCallNames < 0);
 
-                my $iDiff = sprintf("%.0f", (((86400 * $iPlusDays) + str2time(substr($iToday, 0, 8)) - str2time(substr($_, 0, 8))) / 86400));
+                my $iDiff = sprintf("%.0f", (((86400 * $iPlusDays) + str2time(substr($iToday, 0, 8)) - str2time(substr($sSchedLineDate, 0, 8))) / 86400));
+                $iDiff-- if ($iHour < 12);
                 $iPersonPhone = $aOnCallNames[int($iDiff / 7) % ($#aOnCallNames + 1)];
                 last;
             }
             else {
-                my $sEntry = $hSchedule{$_};
+                my $sEntry = $hSchedule{$sSchedLineDate};
                 $iPersonPhone = DSPS_User::matchUserByRegex($sEntry);
             }
         }

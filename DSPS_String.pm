@@ -14,7 +14,8 @@ our @EXPORT = (
     'E_VacationElapsed1', 'S_HelpGeneral',    'S_HelpCommandsA',   'S_HelpCommandsB',    'S_HelpSyntax',        'S_NoSuchTrigger',     'S_AutoNagiosMute',
     'S_SummaryTooLate', 'E_EscalationPrep3', 'E_EscalationEsc4',   'S_VacaNeedTime',      'S_NoVacations',       'S_AmbiguousIgnored1', 'S_AmbiguousReject2', 'S_NoSuchUser',
     'S_NoRecent', '@A_HelpTopics', 'E_StaycationSet2', 'E_StaycationCancel1', 'E_StaycationElapsed1', 'E_UserInvalidated1', 'S_AlreadySubscrbd1', 'S_SuccessSubscrbd1',
-    'S_AlreadyUnSub1', 'S_SuccessUnSub1', 'S_SuccessUnAll', 'S_SendSyntax', 'S_NoSuchSubList1', 'S_SubMsgSent1', 'S_SubMsgTooLong', 'S_SubMsgTooLong1', 'S_NoMembership'
+    'S_AlreadyUnSub1', 'S_SuccessUnSub1', 'S_SuccessUnAll', 'S_SendSyntax', 'S_NoSuchSubList1', 'S_SubMsgSent1', 'S_SubMsgTooLong', 'S_SubMsgTooLong1', 'S_NoMembership',
+    'S_YoureOncall1'
 );
 
 use constant S_NoPermission => "You don't have permission for this command.";
@@ -74,6 +75,7 @@ use constant S_SubMsgSent1       => "Your message was successfully sent to the %
 use constant S_SubMsgTooLong     => 'Your message is 1 character too long. Please submit a shorter version.';
 use constant S_SubMsgTooLong1    => 'Your message is %% characters too long.  Please submit a shorter version.';
 use constant S_NoMembership      => "You aren't currently subscribed to any lists.";
+use constant S_YoureOncall1      => "You are now on call for %%.";
 
 use constant E_SwapSuccess4 => "Subject: Oncall schedule change\n\n" . "%% has swapped weeks with %%.\n\n" . "The new schedule for %% is as follows:\n\n%%";
 use constant E_VacationSet2 => "Subject: DSPS vacation time update\n\n"

@@ -129,8 +129,9 @@ sub destroyRoom($) {
 
 
 
-sub cloneRoomMinusOccupants($) {
+sub cloneRoomMinusOccupants($;$) {
     my $iOrigRoom = shift;
+    my $bKeepSystemUsers = shift || 0;
     my $iNewRoom  = createRoom();
 
     $g_hRooms{$iNewRoom}->{most_occupants_by_phone} = $g_hRooms{$iOrigRoom}->{most_occupants_by_phone};
@@ -145,6 +146,12 @@ sub cloneRoomMinusOccupants($) {
     $g_hRooms{$iNewRoom}->{last_nonhuman_message}   = $g_hRooms{$iOrigRoom}->{last_nonhuman_message};
     $g_hRooms{$iNewRoom}->{summary}                 = $g_hRooms{$iOrigRoom}->{summary};
     $g_hRooms{$iNewRoom}->{sum_reminder_sent}       = $g_hRooms{$iOrigRoom}->{sum_reminder_sent};
+
+    if ($bKeepSystemUsers) {
+        for my $iUser (%{$g_hRooms{$iOrigRoom}->{occupants_by_phone}}) {
+            roomEnsureOccupant($iNewRoom, $iUser) if !DSPS_User::humanUsersPhone($iUser);
+        }
+    }
 
     debugLog(D_rooms, "room $iOrigRoom cloned to $iNewRoom");
     return $iNewRoom;

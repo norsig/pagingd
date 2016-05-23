@@ -96,6 +96,7 @@ use DSPS_SystemFilter;
 use DSPS_Util;
 use DSPS_Version;
 use DSPS_Test;
+use feature 'state'; 
 use strict;
 
 use constant MAX_PAGES_PER_CALL => 100;
@@ -228,6 +229,30 @@ sub checkpointMetrics() {
         }
     }
 }
+
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Page the On Call people to let them know their
+# shift has started.
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+sub alertOnCallChanges() {
+    my ($iMinute, $iHour, $iDay, $iMonth, $iYear) = (localtime($g_iLastWakeTime))[1 .. 5]; 
+    state $iLastUpdateDay = 0;
+    state %hLastUpdateOnCalleeForTag;
+
+    return if $iLastUpdateDay == $iDay;
+
+    for my $sEsc (keys %g_hEscalations) {
+        my $iCurrentsPhone = DSPS_Escalation::getOncallPerson($sEsc);
+        next if defined($hLastUpdateOnCalleeForTag{$sEsc}) && $iCurrentsPhone == $hLastUpdateOnCalleeForTag{$sEsc};
+
+        $hLastUpdateOnCalleeForTag{$sEsc} = $iCurrentsPhone;
+        sendSmsPage($iCurrentsPhone, t(S_YoureOncall1, $sEsc));
+    }
+
+    $iLastUpdateDay = $iDay;
+}
+
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 # Determine the server address - this is used for
@@ -421,6 +446,7 @@ sub deskComCreateCase($$) {
     }
 
     $sMessage =~ s/\n/\\n/g;
+    $sMessage =~ s/\r//g;
 
     if (defined $g_hConfigOptions{desk_url} && $g_hConfigOptions{desk_url}) {
             my $tRequest = HTTP::Request->new(POST => $g_hConfigOptions{desk_url} . '/api/v2/cases');
@@ -464,6 +490,7 @@ sub deskComUpdateCase($$) {
     my $sMessage = shift;
 
     $sMessage =~ s/\n/\\n/g;
+    $sMessage =~ s/"/\\"/g;
 
     if (defined $g_hConfigOptions{desk_url} && $g_hConfigOptions{desk_url}) {
             my $tRequest = HTTP::Request->new(POST => $g_hConfigOptions{desk_url} . "/api/v2/cases/$iCaseNumber/notes");
@@ -1593,20 +1620,20 @@ sub handlePagingCommands($$) {
                     if ($iOrigRoom) {
                         sendSystemMessageToRoom($iSender, 'disbanded the room.', $iSilenceModifier);
 
-                        my $iNewRoom = DSPS_Room::cloneRoomMinusOccupants($iOrigRoom);
+                        my $iNewRoom = DSPS_Room::cloneRoomMinusOccupants($iOrigRoom, 1);
                         DSPS_Room::destroyRoom($iOrigRoom);
                         DSPS_Room::roomEnsureOccupant($iNewRoom, $iSender);
                         processMentions($iSender, $sParams, $sParams, 1, 0, 1);
+                        $g_hRooms{$iNewRoom}{maintenance} = 1;
 
-                        my $sAudience =
-                          S_AudienceUpdate . ' ' . DSPS_Room::roomStatus($iNewRoom) . ($g_hRooms{$iNewRoom}->{ticket_number} ? ('. Tkt: ' . $g_hRooms{$iNewRoom}->{ticket_number}) : '');
+                        my $sAudience = S_AudienceUpdate . ' ' . DSPS_Room::roomStatus($iNewRoom) . ($g_hRooms{$iNewRoom}->{ticket_number} ? ('. Tkt: ' . $g_hRooms{$iNewRoom}->{ticket_number}) : '');
 
                         foreach my $iUserPhone (keys %{ $g_hRooms{$iNewRoom}->{occupants_by_phone} }) {
                             if (DSPS_User::humanUsersPhone($iUserPhone)) {
                                 sendSmsPage($iUserPhone, t(($iSender == $iUserPhone ? 'You' : $g_hUsers{$iSender}->{name}) . " pulled: " . $sAudience));
                             }
                         }
-                        logPage($iSender, '', "pulled into new room: $sAudience");
+                        logPage($iSender, '', "pulled into new maint room: $sAudience");
                     }
                     else {
                         sendSmsPage($iSender, t(S_NotInRoom));
@@ -2009,6 +2036,9 @@ sub processMentions($$$;$$$) {
             $bRoomChanged  = (processMentions($sSender, $sScanMessage, $sRealMessage, $bIncludeSystemUsers, 1) > 0) || $bRoomChanged;
             $sScanMessage  = $sOrigMessage;
             $bFoundSomeone = 1;
+            if ($g_hAliases{$sAlias}->{broadcast}) {
+                $g_hRooms{DSPS_Room::findUsersRoom($sSender)}->{broadcast_speaker} = $sSender;
+            }
         }
     }
 
@@ -2256,7 +2286,10 @@ sub logPage($$;$$) {
 
 sub shouldTell($) {
     my $iSilenceModifier = shift;
-    return (($iSilenceModifier > 0) || (($iSilenceModifier == 0) && isDuringWakingHours()));
+    my $amAwake = isDuringWakingHours();
+    my ($min, $hour) = (localtime($main::g_iLastWakeTime))[1 .. 2];
+    debugLog(D_pageEngine, "silmod=$iSilenceModifier, isDurWak=$amAwake, h=$hour" );
+    return (($iSilenceModifier > 0) || (($iSilenceModifier == 0) && $amAwake));
 }
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
@@ -2291,8 +2324,7 @@ sub sendSystemMessageToRoom($$$) {
             #  1 (set by :command+), meaning always send the notification
             #  0 (set by :command), meaning send the notification based on it being during hours most people are awake
             # -1 (set by :command-), meaning never send the notification - e.g. only send it back to the person themself
-            sendSmsPage($iUserPhone, t(($iSender == $iUserPhone ? ('You have ' . (shouldTell($iSilenceModifier) ? '' : 'silently ')) : $g_hUsers{$iSender}->{name} . ' has ') . $sMessage),
-                QUEUE_PAGE_FIRST)
+            sendSmsPage($iUserPhone, t(($iSender == $iUserPhone ? ('You have ' . (shouldTell($iSilenceModifier) ? '' : 'silently ')) : $g_hUsers{$iSender}->{name} . ' has ') . $sMessage), QUEUE_PAGE_FIRST)
               if (shouldTell($iSilenceModifier) || ($iSender == $iUserPhone));
         }
     }
@@ -2757,7 +2789,7 @@ sub daemonMain() {
 
     while (1) {
 
-        # install signal handlers
+        # re-install signal handlers
         POSIX::sigaction(&POSIX::SIGTERM, $tSignalActionTerm);
         POSIX::sigaction(&POSIX::SIGHUP,  $tSignalActionHup);
         POSIX::sigaction(&POSIX::SIGINT,  $tSignalActionInt);
@@ -2782,6 +2814,10 @@ sub daemonMain() {
                 }
 
                 $g_iLastWakeTime = time();
+    
+                # send out a heads up to on call folks if they've just started their weekly shift
+                my ($iMinute, $iHour, $iDay, $iMonth, $iYear) = (localtime($g_iLastWakeTime))[1 .. 5];
+                alertOnCallChanges() if ($iHour == 12);
 
                 # loop through sockets that are ready to be read.  since we only keep our listening one open
                 # that's the only socket we'll possibly get.  but this 'for' loop is actually a test for
