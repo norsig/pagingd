@@ -125,7 +125,9 @@ sub getScheduledOncallPerson($;$) {
     my $sEscName = shift;
     my $iPlusDays = shift || 0;
 
+    debugLog(D_escalations, "name=$sEscName, defined: " . (defined $g_hEscalations{$sEscName}->{schedule} ? 1 : 0));
     return '' unless defined $g_hEscalations{$sEscName}->{schedule};
+    debugLog(D_escalations, "FOUND: name=$sEscName, defined: " . (defined $g_hEscalations{$sEscName}->{schedule} ? 1 : 0));
 
     my %hSchedule = %{ $g_hEscalations{$sEscName}->{schedule} };
 
@@ -134,6 +136,8 @@ sub getScheduledOncallPerson($;$) {
 
     my $iPersonPhone;
     foreach my $sSchedLineDate (sort keys %hSchedule) {
+        debugLog(D_escalations, "considering $sSchedLineDate");
+
         my $iTodayPlus = $iPlusDays ? time2str("%Y%m%d", (str2time(substr($iToday, 0, 8)) + (86400 * $iPlusDays))) : $iToday;
 
         if ($iTodayPlus > $sSchedLineDate || ($iTodayPlus == $sSchedLineDate && $iHour >= 12)) {
@@ -161,6 +165,7 @@ sub getScheduledOncallPerson($;$) {
             }
         }
         else {
+            debugLog(D_escalations, "final was $sSchedLineDate");
             last;
         }
     }
@@ -183,6 +188,10 @@ sub getOncallPerson($;$) {
     # if you're on staycation you probably don't want to be on call
     do {
         $iPhone = getScheduledOncallPerson($sEscName, $iPlusDays + (++$iWeeks * 7));
+        unless (defined $iPhone) {
+            return '';
+        }
+
     } while ((($g_hUsers{$iPhone}->{vacation_end} > ($main::g_iLastWakeTime + (ONEWEEK * $iWeeks))) ||
               ($g_hUsers{$iPhone}->{staycation_end} > ($main::g_iLastWakeTime + (ONEWEEK * $iWeeks)))) && ($iWeeks < 2));
 

@@ -136,6 +136,10 @@ sub configSyntaxValid() {
             }
         }
 
+        unless (DSPS_Escalation::getOncallPerson($sEscName)) {
+            print STDERR infoLog("escalation $sEscName has no one currently on call (no dates defined or all dates in the future?)");
+            $bValid = 0;
+        }
     }
 
     # per alias check
@@ -208,6 +212,8 @@ sub readConfig(;$) {
         return 0;
     }
 
+    debugLog(D_configRead, "parsing $sConfigFileName");
+
     my $sSection = '';
     my $sInfo    = '';
     my $iErrors  = 0;
@@ -248,6 +254,17 @@ sub readConfig(;$) {
 
                 if (defined $g_hUsers{ $aData[2] }) {
                     print infoLog("configuration error - user with phone number " . $aData[2] . " defined twice (" . $g_hUsers{ $aData[2] }->{name} . ' & ' . $aData[0] . ") $sLineNum");
+                    ++$iErrors;
+                    next;
+                }
+
+                unless ($aData[2] =~ /^\s*\d+\s*$/) {
+                    if ($aData[2] =~ /^\s*[\d\(\)-]+\s*$/) {
+                        print infoLog("configuration error - user's phone number needs to be digits only, no punctuation $sLineNum");
+                    }
+                    else {
+                        print infoLog("configuration error - user has an invalid phone number (should be 10 digits) $sLineNum");
+                    }
                     ++$iErrors;
                     next;
                 }
@@ -673,6 +690,8 @@ sub readConfig(;$) {
         print infoLog("configuration error - unknown directive: \"$_\" $sLineNum");
         ++$iErrors;
     }
+
+    debugLog(D_configRead, "escalations loaded: " . join(', ', sort keys %g_hEscalations));
 
     close(CFG);
     return (!$iErrors);

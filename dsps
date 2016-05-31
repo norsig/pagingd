@@ -73,6 +73,7 @@ use Sys::Syslog qw(:standard :macros);
 use HTTP::Daemon;
 use IO::Select;
 use Getopt::Long;
+use FreezeThaw qw(freeze thaw);
 use CGI qw();
 use Net::SMTP;
 use Cwd 'abs_path';
@@ -115,10 +116,11 @@ use constant LAST_GW_ERROR_FILE => '/tmp/.dsps.last_gw_error';
 # $g_iDebugTopics = D_all & ~D_state;
 # All the D_xxxxx debug constants are listed in DSPS_Debug.pm.
 #-#-#-#-#-#-#-#-#-#-##-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-our $g_iDebugTopics = D_all & ~D_users & ~D_state & ~D_configRead & ~D_rooms;
+our $g_iDebugTopics = D_all & ~D_users & ~D_state & ~D_configRead & ~D_rooms & ~D_escalations;
 
 #our $g_iDebugTopics = 0;
-our $g_iTestingDebugTopics = D_all & ~D_users & ~D_state & ~D_configRead & ~D_rooms;
+our $g_iTestingDebugTopics = D_all;
+#our $g_iTestingDebugTopics = D_all & ~D_users & ~D_state & ~D_rooms;
 
 # drop root privs to become 'nobody'
 $< = $> = 65534 unless ($< == 65534);
@@ -150,6 +152,8 @@ our $g_iLastWakeTime = time();
 my $g_sPIDPath           = '';
 my @g_aOutgoingPageQueue = ();
 my %g_hSubscriptions;
+my $g_iLastUpdateDay = 0;
+my %g_hLastUpdateOnCalleeForTag;
 
 # these one-liners exist as functions so they can be called by some of the included modules
 # essentially these avoid circular include dependencies
@@ -237,20 +241,18 @@ sub checkpointMetrics() {
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 sub alertOnCallChanges() {
     my ($iMinute, $iHour, $iDay, $iMonth, $iYear) = (localtime($g_iLastWakeTime))[1 .. 5]; 
-    state $iLastUpdateDay = 0;
-    state %hLastUpdateOnCalleeForTag;
 
-    return if $iLastUpdateDay == $iDay;
+    return if $g_iLastUpdateDay == $iDay;
 
     for my $sEsc (keys %g_hEscalations) {
         my $iCurrentsPhone = DSPS_Escalation::getOncallPerson($sEsc);
-        next if defined($hLastUpdateOnCalleeForTag{$sEsc}) && $iCurrentsPhone == $hLastUpdateOnCalleeForTag{$sEsc};
+        next if defined($g_hLastUpdateOnCalleeForTag{$sEsc}) && $iCurrentsPhone == $g_hLastUpdateOnCalleeForTag{$sEsc};
 
-        $hLastUpdateOnCalleeForTag{$sEsc} = $iCurrentsPhone;
+        $g_hLastUpdateOnCalleeForTag{$sEsc} = $iCurrentsPhone;
         sendSmsPage($iCurrentsPhone, t(S_YoureOncall1, $sEsc));
     }
 
-    $iLastUpdateDay = $iDay;
+    $g_iLastUpdateDay = $iDay;
 }
 
 
@@ -293,6 +295,8 @@ sub saveState() {
     open(STATE, ">" . C_StatePath . "/dsps.state") || return infoLog('Unable to save state (need write access to ' . C_StatePath . '/dsps.state)');
     print STATE DSPS_User::freezeState() . "\n";
     print STATE DSPS_SystemFilter::freezeState() . "\n";
+    print STATE freeze(%g_hLastUpdateOnCalleeForTag) . "\n";
+    print STATE $g_iLastUpdateDay . "\n";
     print STATE DSPS_User::freezeMessageState();
     close(STATE);
     debugLog(D_state, "saved system state to " . C_StatePath . "/dsps.state");
@@ -305,11 +309,15 @@ sub restoreState() {
     open(STATE, C_StatePath . "/dsps.state") || return infoLog('No saved state to restore (' . C_StatePath . '/dsps.state)');
     my $sUsers      = <STATE>;
     my $sSysFilters = <STATE>;
+    my $sLastUpdateCallee = <STATE>;
+    my $g_iLastUpdateDay = <STATE>;
     my @aMessage    = <STATE>;
     close(STATE);
     chomp($sUsers);
     chomp($sSysFilters);
+    chomp($sLastUpdateCallee);
 
+    eval { %g_hLastUpdateOnCalleeForTag = thaw($sLastUpdateCallee); };
     DSPS_User::thawState($sUsers);
     DSPS_User::thawMessageState(join('', @aMessage));
     DSPS_SystemFilter::thawState($sSysFilters);
@@ -708,7 +716,7 @@ sub sendSmsPage($$;$$) {
 
         if ($iCellNumber =~ /^\s*$/) {
             infoLog("no number specified;  dropping outgoing page");
-            sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected - blank user\n\nUsers are currently: " . join(', ', sort keys %g_hUsers));
+            sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected - blank user\n\nUsers are currently: " . join(', ', sort keys %g_hUsers) . "\n\nMessage:\n$sMessage");
             return;
         }
 
@@ -1334,7 +1342,7 @@ sub handlePagingCommands($$) {
         # set/edit a regex filter
         if ($sCommand =~ /^:((nore$)|(noreg))/) {
 
-            if ($sParams =~ /(\d+\w{0,1})\s+(.*?)\s*$/) {
+            if ($sParams =~ /^\s*(\d+\w{0,1})\s+(.*?)\s*$/) {
                 my $sTime  = $1;
                 my $sRegex = parseRegex($2);
 
@@ -1342,8 +1350,13 @@ sub handlePagingCommands($$) {
                     my ($iSeconds, $sTimeText) = parseUserTime($sTime);
 
                     if ($iSeconds) {
-                        DSPS_SystemFilter::newRegexFilter($sRegex, $g_iLastWakeTime + $iSeconds);
-                        sendSystemMessageToRoom($iSender, "filtered automated pages matching /$sRegex/ for $sTimeText", $iSilenceModifier);
+                        if (!$sRegex) {
+                            sendSmsPage($iSender, t("You can't use a blank regex to match everything.  Use the :nonagios command if that's your intention."));
+                        }
+                        else {
+                            DSPS_SystemFilter::newRegexFilter($sRegex, $g_iLastWakeTime + $iSeconds);
+                            sendSystemMessageToRoom($iSender, "filtered automated pages matching /$sRegex/ for $sTimeText", $iSilenceModifier);
+                        }
                     }
                     else {
                         if (DSPS_SystemFilter::rmRegexFilter($sRegex)) {
@@ -1364,7 +1377,7 @@ sub handlePagingCommands($$) {
         }
 
         # show current filters
-        if ($sCommand =~ /^\?filter/) {
+        if ($sCommand =~ /^\?filter/ || $sCommand =~ /\?nore\s*$/ || $sCommand =~ /\?noreg/) {
             if (DSPS_CmdPermission::checkAndRefutePermissions($iSender, '?filters')) {
                 my $sFilters = filterStatus($iSender);
                 logPage($iSender, '', "received filter status: $sFilters");
@@ -3390,6 +3403,10 @@ sub clientStartup() {
     }
 
     if ($bCmdDaemon || $bRunForeground) {
+        if ($bRunForeground) {
+            $g_bTEST_RUN = 3 unless $g_bTEST_RUN;    # i.e. if already hardcoded to '1' then don't override that
+            $g_iDebugTopics = $g_iTestingDebugTopics;
+        }
         readValidConfigOrDie($g_sConfigFilename);
 
         if (my $iDaemonPID = daemonAlreadyRunning()) {
@@ -3442,9 +3459,7 @@ sub clientStartup() {
             daemonMain() unless $iDaemonPid;
         }
         else {
-            $g_bTEST_RUN = 3 unless $g_bTEST_RUN;    # i.e. if already hardcoded to '1' then don't override that
             print "  *** RUNNING IN FOREGROUND ***\n";
-            $g_iDebugTopics = $g_iTestingDebugTopics;
             daemonMain();
         }
         exit(0);
