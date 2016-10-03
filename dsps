@@ -48,7 +48,7 @@
 #-# Client:
 #-#     * commandline interface
 #-#     * can be used to submit pages to the daemon (sends to network socket)
-#-#     * can be used to submit command to the daemon (sends to network socket)
+#-#     * can be used to submit commands to the daemon (sends to network socket)
 #-#
 #-# On a typical daemon startup (-d commandline switch) the client forks into the background,
 #-# the child becomes the daemon and detaches while the parent (the CLI) exits.  Some of the
@@ -452,9 +452,14 @@ sub deskComCreateCase($$) {
     if ($sMessage =~ /Email:\s*([^ ]+)$/im) {
         $sEmail = $1;
     }
+    else {
+        infoLog("desk.com case submission aborted due to blank Email in message");
+        return;
+    }
 
     $sMessage =~ s/\n/\\n/g;
     $sMessage =~ s/\r//g;
+    $sMessage =~ s/"/\\"/g;
 
     if (defined $g_hConfigOptions{desk_url} && $g_hConfigOptions{desk_url}) {
             my $tRequest = HTTP::Request->new(POST => $g_hConfigOptions{desk_url} . '/api/v2/cases');
@@ -2812,7 +2817,7 @@ sub daemonMain() {
             infoLog('daemon starting in ' . ($g_bTEST_RUN ? 'TEST MODE' : 'live mode') . "; listening on $sServerAddr:$iServerPort");
 
             # daemon main loop
-          DAEMON_MAIN: while (1) {
+            DAEMON_MAIN: while (1) {
 
                 # update daily stats for how many pages we've sent
                 checkpointMetrics();
@@ -2834,7 +2839,7 @@ sub daemonMain() {
 
                 # loop through sockets that are ready to be read.  since we only keep our listening one open
                 # that's the only socket we'll possibly get.  but this 'for' loop is actually a test for
-                # whether we woke up for a socket connection versus just timing out because 30 seconds have
+                # whether we woke up for a socket connection versus just timing out because 10 seconds have
                 # elapsed.  if we enter the 'for', we got a socket.
                 foreach my $tReadSocketHandle (@$rtReadSet) {
                     my $oConnection;
@@ -2862,6 +2867,7 @@ sub daemonMain() {
 
                         if ($sException eq "alarm\n") {
                             infoLog("ERROR:  timeout reading request" . ($oConnection ? " from " . $oConnection->peerhost() . ':' . $oConnection->peerport() : ''));
+                            $oConnection->close() if $oConnection;
                             next;
                         }
                     };
@@ -2870,6 +2876,7 @@ sub daemonMain() {
                     if ($sException) {
                         infoLog("EXCEPTION (inner): $sException");
                         sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected - exception in daemonMain (inner)\n\n$sException\n\ngrep dsps /var/log/syslog\n");
+                        $oConnection->close() if $oConnection;
                         next DAEMON_MAIN;
                     }
 

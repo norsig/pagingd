@@ -192,8 +192,12 @@ sub getOncallPerson($;$) {
             return '';
         }
 
-    } while ((($g_hUsers{$iPhone}->{vacation_end} > ($main::g_iLastWakeTime + (ONEWEEK * $iWeeks))) ||
-              ($g_hUsers{$iPhone}->{staycation_end} > ($main::g_iLastWakeTime + (ONEWEEK * $iWeeks)))) && ($iWeeks < 2));
+    } while (((!defined $g_hUsers{$iPhone}) ||
+              ($g_hUsers{$iPhone}->{vacation_end} > ($main::g_iLastWakeTime + (ONEWEEK * $iWeeks))) ||
+              ($g_hUsers{$iPhone}->{staycation_end} > ($main::g_iLastWakeTime + (ONEWEEK * $iWeeks)))) 
+               && ($iWeeks < 2));
+              # "!defined user" can happen if the valid: directive is used on a user and they get removed
+              # from the running config but are still in the escalation definition
 
     return $iPhone;
 }
