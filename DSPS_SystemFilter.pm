@@ -189,7 +189,7 @@ sub newRegexProfile($$$$) {
         $iLastID++;
     }
 
-    debugLog(D_configRead, (defined $rFilterRegexProfile{$iLastID} ? 'updated' : 'added') . " regex profile /$sRegex/ from $sFrom to $sTill ($sTitle)");
+    debugLog(D_filters, (defined $rFilterRegexProfile{$iLastID} ? 'updated' : 'added') . " regex profile /$sRegex/ from $sFrom to $sTill ($sTitle)");
     $rFilterRegexProfile{$iLastID} = { title => $sTitle, regex => $sRegex, from => $sFrom, till => $sTill };
 }
 

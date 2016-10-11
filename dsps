@@ -2055,7 +2055,13 @@ sub processMentions($$$;$$$) {
             $sScanMessage  = $sOrigMessage;
             $bFoundSomeone = 1;
             if ($g_hAliases{$sAlias}->{broadcast}) {
-                $g_hRooms{DSPS_Room::findUsersRoom($sSender)}->{broadcast_speaker} = $sSender;
+               if ((defined $g_hRooms{DSPS_Room::findUsersRoom($sSender)}->{broadcast_speaker}) && $g_hRooms{DSPS_Room::findUsersRoom($sSender)}->{broadcast_speaker}) {
+                    # broadcast already set for room -- not resetting via alias
+                }
+                else {
+                    $g_hRooms{DSPS_Room::findUsersRoom($sSender)}->{broadcast_speaker} = $sSender;
+                    debugLog(D_pageEngine, "setting broadcast for ${sSender}'s room via alias $sAlias");
+                }
             }
         }
     }
@@ -2827,7 +2833,7 @@ sub daemonMain() {
                 my ($rtReadSet) = IO::Select->select($rtReadHandles, undef, undef, 10);
                 if ($! eq 'Bad file descriptor') {
                     infoLog("ERROR: bad file descriptor on listening socket; exiting from [$0]");
-                    sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected - bad file descriptor on listening socket\n\nProcess: $0\nIntentionally exiting.\n");
+                    sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected (FATAL) - bad file descriptor on listening socket\n\nProcess: $0\nIntentionally exiting.\nPAGING IS DOWN.\nRestart on nag with 'dsps -d'.\n");
                     exit(0);
                 }
 
@@ -3001,8 +3007,7 @@ sub daemonMain() {
             my $sException = $@;
             $g_bNoConfirm = 0;
             infoLog("EXCEPTION (outer): $sException");
-            infoLog("restarting daemonMain");
-            sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected - exception in daemonMain (outer)\n\n$sException\n\nDaemon auto-restarting.");
+            sendEmail($g_hConfigOptions{admin_email}, '', "Subject: DSPS bug detected (FATAL) - exception in daemonMain (outer)\n\n$sException\n\nPAGING IS DOWN.\nRestart on nag with 'dsps -d'.\n");
         }
     }
 
