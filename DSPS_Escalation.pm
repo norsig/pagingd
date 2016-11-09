@@ -125,12 +125,10 @@ sub getScheduledOncallPerson($;$) {
     my $sEscName = shift;
     my $iPlusDays = shift || 0;
 
-    debugLog(D_escalations, "name=$sEscName, defined: " . (defined $g_hEscalations{$sEscName}->{schedule} ? 1 : 0));
+    debugLog(D_escalations, "plusdays=$iPlusDays, name=$sEscName, defined: " . (defined $g_hEscalations{$sEscName}->{schedule} ? 1 : 0));
     return '' unless defined $g_hEscalations{$sEscName}->{schedule};
-    debugLog(D_escalations, "FOUND: name=$sEscName, defined: " . (defined $g_hEscalations{$sEscName}->{schedule} ? 1 : 0));
 
     my %hSchedule = %{ $g_hEscalations{$sEscName}->{schedule} };
-
     my ($iMinute, $iHour, $iDay, $iMonth, $iYear) = (localtime)[1 .. 5];
     my $iToday = sprintf("%d%02d%02d", $iYear + 1900, $iMonth + 1, $iDay);
 
@@ -155,6 +153,8 @@ sub getScheduledOncallPerson($;$) {
                 return '' if ($#aOnCallNames < 0);
 
                 my $iDiff = sprintf("%.0f", (((86400 * $iPlusDays) + str2time(substr($iToday, 0, 8)) - str2time(substr($sSchedLineDate, 0, 8))) / 86400));
+                debugLog(D_escalations, "iDiff = $iDiff using iPlusDays=$iPlusDays, today=$iToday, last sSchedLineDate=$sSchedLineDate");
+
                 $iDiff-- if ($iHour < 12);
                 $iPersonPhone = $aOnCallNames[int($iDiff / 7) % ($#aOnCallNames + 1)];
                 last;
@@ -238,8 +238,11 @@ sub getFullOncallSchedule($) {
                     my $iNewDay = str2time($_) + ($iPlusWeek * ONEWEEK);
 
                     next unless ($iNewDay + 604000 >= $iTodaySeconds);
+                    #print STDERR "getFullOncallSchedule() - $_ => " . str2time($_) . ", plusweek=$iPlusWeek; newDay=$iNewDay\n";
 
-                    $sResult .= time2str("%x", $iNewDay) . ": " . $g_hUsers{$iPersonPhone}->{name} . "\n";
+                    # the +3600 is to account for DST where we're an extra hour off.  because time2str("%x") is converting to a single day,
+                    # the extra hour will push it further into the correct date.
+                    $sResult .= time2str("%x", $iNewDay + 3600) . ": " . $g_hUsers{$iPersonPhone}->{name} . "\n";
                     $iWeeksShown++;
 
                     last if ($iWeeksShown > 4);
