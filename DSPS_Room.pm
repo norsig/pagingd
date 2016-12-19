@@ -338,6 +338,7 @@ sub roomStatusIndividual($;$$$$) {
                 # let's start by entering all group members from the current group into this hash
                 $hGroupMembers{$_}++ for (DSPS_User::usersInGroup($sGroup));
                 my $iTotalInGroup = keys(%hGroupMembers);
+                next if $iTotalInGroup < 2;
 
                 # now we loop through people that are part of the current group.  for each group member
                 # that's present in the room we

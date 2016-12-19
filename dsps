@@ -119,8 +119,8 @@ use constant LAST_GW_ERROR_FILE => '/tmp/.dsps.last_gw_error';
 our $g_iDebugTopics = D_all & ~D_users & ~D_state & ~D_configRead & ~D_rooms & ~D_escalations;
 
 #our $g_iDebugTopics = 0;
-our $g_iTestingDebugTopics = D_all;
-#our $g_iTestingDebugTopics = D_all & ~D_users & ~D_state & ~D_rooms;
+#our $g_iTestingDebugTopics = D_all;
+our $g_iTestingDebugTopics = D_all & ~D_users & ~D_state & ~D_rooms;
 
 # drop root privs to become 'nobody'
 $< = $> = 65534 unless ($< == 65534);
