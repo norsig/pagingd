@@ -3461,7 +3461,7 @@ sub clientStartup() {
 
         # make sure our statepath dir exists
         if ((! -d C_StatePath) && (!mkdir(C_StatePath))) {
-            print STDERR infoLog("ERROR: cannot create " . C_StatePath . " (needs to exist with owner 'nobody')");
+            print STDERR infoLog("ERROR: cannot create directory " . C_StatePath . " (needs to exist with owner 'nobody')");
             exit(0);
         }
 
